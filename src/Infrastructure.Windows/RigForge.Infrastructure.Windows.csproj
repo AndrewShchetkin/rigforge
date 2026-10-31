@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>RigForge.Infrastructure.Windows</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Core\RigForge.Core.csproj" />
+    <ProjectReference Include="..\Infrastructure.CrossPlatform\RigForge.Infrastructure.CrossPlatform.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Vortice.Direct3D11" />
+    <PackageReference Include="Vortice.DXGI" />
+  </ItemGroup>
+
+</Project>

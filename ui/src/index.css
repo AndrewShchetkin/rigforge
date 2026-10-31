@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-h-dvh bg-zinc-950 font-sans text-zinc-100 antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-violet-400);
+    outline-offset: 2px;
+  }
+
+  input,
+  select,
+  output {
+    font-variant-numeric: tabular-nums;
+  }
+}

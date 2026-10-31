@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Application/RigForge.Application.csproj" />
+    <Project Path="src/Core/RigForge.Core.csproj" />
+    <Project Path="src/Host.Daemon/RigForge.Host.Daemon.csproj" />
+    <Project Path="src/Infrastructure.CrossPlatform/RigForge.Infrastructure.CrossPlatform.csproj" />
+    <Project Path="src/Infrastructure.Linux/RigForge.Infrastructure.Linux.csproj" />
+    <Project Path="src/Infrastructure.Windows/RigForge.Infrastructure.Windows.csproj" />
+    <Project Path="src/Tools.HardwareScanner/RigForge.Tools.HardwareScanner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RigForge.UnitTests/RigForge.UnitTests.csproj" />
+  </Folder>
+</Solution>

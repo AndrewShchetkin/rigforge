@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "RigForge.Daemon": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "applicationUrl": "http://127.0.0.1:5757",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "RigForge.Daemon (dry run)": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "applicationUrl": "http://127.0.0.1:5757",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Hardware__DryRun": "true"
+      }
+    }
+  }
+}

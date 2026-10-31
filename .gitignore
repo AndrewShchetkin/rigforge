@@ -1,0 +1,27 @@
+# .NET
+bin/
+obj/
+artifacts/
+publish/
+TestResults/
+*.user
+*.suo
+*.rsuser
+.vs/
+
+# Node / UI
+node_modules/
+ui/dist/
+*.tsbuildinfo
+
+# UI build output is copied into the daemon at build time
+src/Host.Daemon/wwwroot/
+
+# IDEs
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Runtime data
+*.log
+data/

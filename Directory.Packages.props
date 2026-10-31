@@ -1,0 +1,35 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup Label="Hardware access">
+    <PackageVersion Include="HidSharp" Version="2.6.4" />
+    <PackageVersion Include="LibUsbDotNet" Version="3.0.224" />
+    <PackageVersion Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <PackageVersion Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageVersion Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+  <ItemGroup Label="Rendering">
+    <PackageVersion Include="SkiaSharp" Version="4.154.0" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux" Version="4.154.0" />
+  </ItemGroup>
+  <ItemGroup Label="Application">
+    <PackageVersion Include="FluentValidation" Version="12.2.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.14" />
+  </ItemGroup>
+  <ItemGroup Label="Hosting">
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.14" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.14" />
+  </ItemGroup>
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="xunit.v3" Version="4.0.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+  </ItemGroup>
+</Project>

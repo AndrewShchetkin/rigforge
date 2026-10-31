@@ -1,0 +1,21 @@
+# systemd *user* unit: the daemon lives in the graphical session (screen capture via PipeWire later)
+# and reaches USB devices through the udev "uaccess" rules in 60-rigforge.rules.
+#
+#   dotnet publish src/Host.Daemon -c Release -r linux-x64 --self-contained false -o ~/.local/share/rigforge
+#   install -Dm644 deploy/linux/rigforge.service ~/.config/systemd/user/rigforge.service
+#   systemctl --user daemon-reload && systemctl --user enable --now rigforge
+[Unit]
+Description=RigForge RGB, cooling and AIO screen daemon
+After=graphical-session.target
+
+[Service]
+Type=notify
+ExecStart=%h/.local/share/rigforge/RigForge.Daemon
+WorkingDirectory=%h/.local/share/rigforge
+# Caps the gen0 allocation budget (default scales with the L3 cache size); saves a few MB of RAM.
+Environment=DOTNET_GCgen0MaxBudget=0x400000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

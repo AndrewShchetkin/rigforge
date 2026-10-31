@@ -1,0 +1,79 @@
+{
+  "info": {
+    "name": "RigForge daemon",
+    "description": "REST surface of the RigForge daemon (http://127.0.0.1:5757). The UI uses the SignalR hub at /hubs/control; these endpoints share the same validated profile commands. Validation errors return RFC 7807 problem details.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:5757" },
+    { "key": "curveId", "value": "nzxt:300e:SERIAL:pump" }
+  ],
+  "item": [
+    {
+      "name": "Diagnostics",
+      "item": [
+        { "name": "Health", "request": { "method": "GET", "url": "{{baseUrl}}/api/health" } },
+        { "name": "Full state", "request": { "method": "GET", "url": "{{baseUrl}}/api/state" } },
+        { "name": "Devices", "request": { "method": "GET", "url": "{{baseUrl}}/api/devices" } },
+        { "name": "Rescan devices", "request": { "method": "POST", "url": "{{baseUrl}}/api/devices/rescan" } },
+        { "name": "Telemetry", "request": { "method": "GET", "url": "{{baseUrl}}/api/telemetry" } },
+        { "name": "OpenAPI document (Development)", "request": { "method": "GET", "url": "{{baseUrl}}/openapi/v1.json" } }
+      ]
+    },
+    {
+      "name": "Profile",
+      "item": [
+        { "name": "Get profile", "request": { "method": "GET", "url": "{{baseUrl}}/api/profile" } },
+        {
+          "name": "Update effect",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/effect",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectId\": \"gradient\",\n  \"brightness\": 0.8,\n  \"speed\": 1.5,\n  \"colors\": [\"#FF0080\", \"#00C8FF\"],\n  \"angle\": 45,\n  \"sensorSelector\": null,\n  \"temperatureLow\": 35,\n  \"temperatureHigh\": 80,\n  \"targetFps\": 60\n}"
+            }
+          }
+        },
+        {
+          "name": "Update LCD",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/lcd",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"Dashboard\",\n  \"brightness\": 80,\n  \"rotation\": 0,\n  \"sensorSelectors\": [\"role:CpuTemperature\", \"role:GpuTemperature\", \"role:LiquidTemperature\"],\n  \"accentColor\": \"#8B5CF6\",\n  \"framesPerSecond\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Update canvas",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/canvas",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"width\": 320,\n  \"height\": 180,\n  \"placements\": [\n    { \"deviceId\": \"asus-aura:19af:SERIAL\", \"zoneId\": \"argb1\", \"x\": 20, \"y\": 140, \"width\": 280, \"height\": 12, \"rotation\": 0, \"enabled\": true, \"ledCount\": 60 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Upsert fan curve",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/fan-curves/{{curveId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{curveId}}\",\n  \"deviceId\": \"nzxt:300e:SERIAL\",\n  \"channelId\": \"pump\",\n  \"enabled\": true,\n  \"mode\": \"Curve\",\n  \"fixedDuty\": 50,\n  \"sensorSelectors\": [\"role:LiquidTemperature\"],\n  \"points\": [\n    { \"temperature\": 25, \"duty\": 40 },\n    { \"temperature\": 30, \"duty\": 50 },\n    { \"temperature\": 35, \"duty\": 70 },\n    { \"temperature\": 40, \"duty\": 90 },\n    { \"temperature\": 45, \"duty\": 100 }\n  ],\n  \"hysteresisCelsius\": 1,\n  \"rampUpPercentPerSecond\": 10,\n  \"rampDownPercentPerSecond\": 5,\n  \"minDuty\": 30,\n  \"maxDuty\": 100,\n  \"temperatureSmoothingSeconds\": 0\n}"
+            }
+          }
+        },
+        { "name": "Remove fan curve", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/fan-curves/{{curveId}}" } }
+      ]
+    }
+  ]
+}

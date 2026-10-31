@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>RigForge.Host.Daemon</RootNamespace>
+    <AssemblyName>RigForge.Daemon</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- Published for Windows the daemon runs without a console window (started at logon by Task Scheduler). -->
+    <OutputType Condition="$(RuntimeIdentifier.StartsWith('win'))">WinExe</OutputType>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Low-footprint runtime settings">
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Application\RigForge.Application.csproj" />
+    <ProjectReference Include="..\Infrastructure.CrossPlatform\RigForge.Infrastructure.CrossPlatform.csproj" />
+    <ProjectReference Include="..\Infrastructure.Windows\RigForge.Infrastructure.Windows.csproj" />
+    <ProjectReference Include="..\Infrastructure.Linux\RigForge.Infrastructure.Linux.csproj" />
+  </ItemGroup>
+
+  <!-- SkiaSharp ships a ~90 MB native libSkiaSharp.pdb among its runtime assets; package symbols do not belong in a deployment. -->
+  <Target Name="ExcludePackageSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' AND '%(ResolvedFileToPublish.NuGetPackageId)' != ''" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,252 @@
+// Wire contract of the RigForge daemon (SignalR hub at /hubs/control, JSON protocol, camelCase, enums as strings).
+// Mirrors src/Host.Daemon/Contracts/Dtos.cs and src/Core/Models/*.cs — keep both sides in sync.
+// Authoritative value ranges live in src/Application/Validation/RigProfileValidator.cs; ui/src/api/schemas.ts
+// applies the same or stricter limits. Fields documented as integers are `int` on the C# side.
+
+// ---------- Enums ----------
+export type DeviceCapability = 'Rgb' | 'FanControl' | 'Sensors' | 'Lcd';
+export type LedTopology = 'Point' | 'Linear' | 'Ring' | 'Composite';
+export type FanChannelKind = 'Fan' | 'Pump';
+export type SensorKind = 'Temperature' | 'Load' | 'FanSpeed' | 'Duty' | 'Power' | 'Clock' | 'Data' | 'Voltage';
+export type SensorRole =
+  | 'None'
+  | 'CpuTemperature'
+  | 'GpuTemperature'
+  | 'LiquidTemperature'
+  | 'CpuLoad'
+  | 'GpuLoad'
+  | 'GpuPower'
+  | 'PumpSpeed';
+export type FanControlMode = 'Curve' | 'Fixed';
+export type LcdMode = 'Dashboard' | 'SingleSensor' | 'Graph' | 'BuiltInLiquid';
+export type PreviewChannel = 'Leds' | 'Lcd';
+
+/** Sensor selector: either an exact sensor id or `role:<SensorRole>` (e.g. `role:CpuTemperature`). */
+export type SensorSelector = string;
+
+// ---------- Read models ----------
+export interface DaemonInfoDto {
+  version: string;
+  platform: string;
+  startedAt: string; // ISO-8601
+  workingSetBytes: number;
+  managedHeapBytes: number;
+}
+
+export interface LedPositionDto {
+  /** Normalized 0..1 inside the zone's bounding box. */
+  x: number;
+  y: number;
+}
+
+export interface RgbZoneDto {
+  id: string;
+  name: string;
+  topology: LedTopology;
+  ledCount: number;
+  /** ARGB headers: LED count is user-configurable via ZonePlacement.ledCount. */
+  isResizable: boolean;
+  maxLedCount: number;
+  leds: LedPositionDto[];
+}
+
+export interface FanChannelDto {
+  id: string;
+  name: string;
+  kind: FanChannelKind;
+  minDutyPercent: number;
+  maxDutyPercent: number;
+  speedSensorId: string | null;
+}
+
+export interface LcdInfoDto {
+  width: number;
+  height: number;
+  isCircular: boolean;
+  maxFramesPerSecond: number;
+}
+
+export interface DeviceDto {
+  id: string;
+  name: string;
+  vendor: string;
+  capabilities: DeviceCapability[];
+  properties: Record<string, string>;
+  zones: RgbZoneDto[];
+  fanChannels: FanChannelDto[];
+  lcd: LcdInfoDto | null;
+}
+
+export interface SensorReadingDto {
+  id: string;
+  name: string;
+  kind: SensorKind;
+  role: SensorRole;
+  value: number;
+  unit: string;
+  timestamp: string;
+}
+
+export interface TelemetryDto {
+  timestamp: string;
+  readings: SensorReadingDto[];
+}
+
+export interface FanStatusDto {
+  curveId: string;
+  deviceId: string;
+  channelId: string;
+  temperature: number | null;
+  targetDuty: number;
+  appliedDuty: number;
+  failsafe: boolean;
+  message: string | null;
+}
+
+export interface EffectDescriptorDto {
+  id: string;
+  name: string;
+  description: string;
+  isAnimated: boolean;
+  usesColors: boolean;
+  usesSpeed: boolean;
+  usesAngle: boolean;
+  usesSensor: boolean;
+  minColors: number;
+  maxColors: number;
+}
+
+export interface ZonePreviewDto {
+  deviceId: string;
+  zoneId: string;
+  /** base64-encoded RGB triplets, one per LED in zone order. */
+  colors: string;
+}
+
+export interface LedPreviewDto {
+  zones: ZonePreviewDto[];
+}
+
+// ---------- Profile (settings documents, sent back as-is) ----------
+export interface ZonePlacement {
+  deviceId: string;
+  zoneId: string;
+  /** Top-left corner of the unrotated box in canvas units; rotation (degrees, clockwise) is around that corner (Konva convention). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  enabled: boolean;
+  /**
+   * Integer, only for resizable zones (ARGB headers), 1..zone.maxLedCount. After UpdateCanvas the daemon resizes the
+   * zone, regenerates `RgbZoneDto.leds` with the topology's default layout and broadcasts StateChanged.
+   */
+  ledCount: number | null;
+}
+
+export interface VirtualCanvas {
+  width: number;
+  height: number;
+  placements: ZonePlacement[];
+}
+
+export interface EffectSettings {
+  effectId: string;
+  /** 0..1 */
+  brightness: number;
+  /** 0.05..10 */
+  speed: number;
+  /** "#RRGGBB" */
+  colors: string[];
+  /** degrees */
+  angle: number;
+  sensorSelector: SensorSelector | null;
+  temperatureLow: number;
+  temperatureHigh: number;
+  /** 1..60 */
+  targetFps: number;
+}
+
+export interface FanCurvePoint {
+  temperature: number;
+  duty: number;
+}
+
+export interface FanCurve {
+  /** Convention: `${deviceId}:${channelId}` */
+  id: string;
+  deviceId: string;
+  channelId: string;
+  enabled: boolean;
+  mode: FanControlMode;
+  fixedDuty: number;
+  sensorSelectors: SensorSelector[];
+  points: FanCurvePoint[];
+  hysteresisCelsius: number;
+  rampUpPercentPerSecond: number;
+  rampDownPercentPerSecond: number;
+  minDuty: number;
+  maxDuty: number;
+  temperatureSmoothingSeconds: number;
+}
+
+export interface LcdSettings {
+  mode: LcdMode;
+  brightness: number;
+  rotation: 0 | 90 | 180 | 270;
+  sensorSelectors: SensorSelector[];
+  accentColor: string;
+  framesPerSecond: number;
+}
+
+export interface RigProfile {
+  schemaVersion: number;
+  canvas: VirtualCanvas;
+  effect: EffectSettings;
+  fanCurves: FanCurve[];
+  lcd: LcdSettings;
+}
+
+export interface SystemStateDto {
+  info: DaemonInfoDto;
+  devices: DeviceDto[];
+  profile: RigProfile;
+  /** Saved placements plus auto-placed zones that the user has not positioned yet. */
+  effectiveCanvas: VirtualCanvas;
+  effects: EffectDescriptorDto[];
+  telemetry: TelemetryDto;
+  fanStatus: FanStatusDto[];
+  /** Human-readable problems, e.g. conflicting vendor software running. */
+  warnings: string[];
+}
+
+// ---------- Hub API ----------
+/** Client -> server methods (connection.invoke). Validation failures reject with the HubException message. */
+export interface DaemonHubMethods {
+  GetState(): Promise<SystemStateDto>;
+  UpdateCanvas(canvas: VirtualCanvas): Promise<SystemStateDto>;
+  UpdateEffect(effect: EffectSettings): Promise<SystemStateDto>;
+  UpsertFanCurve(curve: FanCurve): Promise<SystemStateDto>;
+  RemoveFanCurve(curveId: string): Promise<SystemStateDto>;
+  UpdateLcd(lcd: LcdSettings): Promise<SystemStateDto>;
+  RescanDevices(): Promise<SystemStateDto>;
+  /** Opt-in to high-rate preview streams; only enable while the corresponding page is visible. */
+  SetPreview(channel: PreviewChannel, enabled: boolean): Promise<void>;
+}
+
+/** Server -> client events (connection.on). */
+export interface DaemonHubEvents {
+  /** ~1 Hz */
+  Telemetry: (telemetry: TelemetryDto) => void;
+  /** ~1 Hz */
+  FanStatus: (status: FanStatusDto[]) => void;
+  /** ~20 Hz, only after SetPreview('Leds', true) */
+  LedPreview: (frame: LedPreviewDto) => void;
+  /** LCD frame rate, only after SetPreview('Lcd', true); base64 PNG */
+  LcdPreview: (pngBase64: string) => void;
+  /** Devices or profile changed (possibly by another client). */
+  StateChanged: (state: SystemStateDto) => void;
+}
+
+export const HUB_PATH = '/hubs/control';
