@@ -31,6 +31,10 @@ udev.SetAction(result => UdevCommand.Run(result.GetValue(udevOutput)));
 var conflicts = new Command("conflicts", "List running software that would fight over the same hardware.");
 conflicts.SetAction(_ => ConflictsCommand.Run());
 
+var smbusVerbose = Verbose();
+var smbus = new Command("smbus", "Read-only SMBIOS + SMBus Kingston FURY DDR5 diagnostic (never changes lighting mode or colors).") { smbusVerbose };
+smbus.SetAction(result => SmbusCommand.Run(result.GetValue(smbusVerbose)));
+
 var dumpOutput = new Option<FileInfo?>("--output", "-o") { Description = "Write the report to a file instead of stdout" };
 var dumpVerbose = Verbose();
 var dump = new Command("dump", "Full diagnostic report as JSON (HID devices, detected devices, sensors, conflicts).") { dumpOutput, dumpVerbose };
@@ -42,6 +46,7 @@ root.Add(probe);
 root.Add(sensors);
 root.Add(udev);
 root.Add(conflicts);
+root.Add(smbus);
 root.Add(dump);
 
 return await root.Parse(args).InvokeAsync();

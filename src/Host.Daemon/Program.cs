@@ -14,7 +14,16 @@ using RigForge.Infrastructure.Windows;
 
 // Slim builder: no IIS integration, no HTTPS/certificate plumbing, fewer default services → smaller footprint.
 // Content root = binary folder: services and logon tasks start with System32 as the working directory.
-var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
+// When launched via "dotnet run", wwwroot sits in the project folder three levels above bin/<Config>/<tfm>.
+var webRoot = Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot"))
+    ? Path.Combine(AppContext.BaseDirectory, "wwwroot")
+    : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "wwwroot"));
+var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+    WebRootPath = Directory.Exists(webRoot) ? webRoot : null,
+});
 
 builder.Services.AddWindowsService(options => options.ServiceName = "RigForge");
 builder.Services.AddSystemd();

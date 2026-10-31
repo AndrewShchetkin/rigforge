@@ -15,6 +15,8 @@ public sealed class HardwareOptions
     public AsusOptions Asus { get; set; } = new();
 
     public NvidiaOptions Nvidia { get; set; } = new();
+
+    public KingstonFuryOptions KingstonFury { get; set; } = new();
 }
 
 public sealed class NzxtOptions
@@ -42,6 +44,23 @@ public sealed class AsusOptions
 public sealed class NvidiaOptions
 {
     public bool Enabled { get; set; } = true;
+}
+
+public sealed class KingstonFuryOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Upper bound of frames per second streamed over SMBus (hardware-paced at ~25-30 FPS for 2 DIMMs).</summary>
+    public int MaxFramesPerSecond { get; set; } = 30;
+
+    /// <summary>Controller master brightness register (0x20), 0..100 %.</summary>
+    public int BrightnessPercent { get; set; } = 100;
+
+    /// <summary>DIMM slot offsets from base address 0x60 to probe (default 0..3 = 0x60..0x63).</summary>
+    public int[] CandidateSlots { get; set; } = [0, 1, 2, 3];
+
+    /// <summary>Require SMBIOS Type 17 to report at least one KF5* DDR5 module before opening SMBus.</summary>
+    public bool RequireSmbiosMatch { get; set; } = true;
 }
 
 public sealed class StorageOptions

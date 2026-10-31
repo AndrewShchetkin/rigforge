@@ -11,6 +11,7 @@ public static class ConflictingSoftwareDetector
         ("SignalRgb", "SignalRGB", "streams RGB frames to the same controllers"),
         ("LightingService", "ASUS Armoury Crate (LightingService)", "overrides Aura motherboard lighting"),
         ("ArmouryCrate", "ASUS Armoury Crate", "overrides Aura motherboard lighting"),
+        ("FURYCTRL", "Kingston FURY CTRL", "writes to Kingston FURY DRAM RGB registers over SMBus"),
         ("OpenRGB", "OpenRGB", "streams RGB frames to the same controllers"),
         ("FanControl", "FanControl", "writes fan duties to the same channels"),
         ("liquidctl", "liquidctl", "sends commands to the same NZXT devices"),

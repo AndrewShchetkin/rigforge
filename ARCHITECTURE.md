@@ -46,7 +46,7 @@ Windows-классы помечены `[SupportedOSPlatform("windows")]`, и а�
 
 | Интерфейс | Назначение | Реализации |
 | --- | --- | --- |
-| `IRgbDevice` | зоны с нормализованными координатами LED, приём кадра | NZXT HUE 2, ASUS Aura USB |
+| `IRgbDevice` | зоны с нормализованными координатами LED, приём кадра | NZXT HUE 2, ASUS Aura USB, Kingston FURY DDR5 (SMBus) |
 | `IFanController` | каналы вентиляторов/помпы, `SetDuty`, `RestoreDefault` | Kraken, HUE 2, LHM Super I/O, sysfs hwmon |
 | `ISensorProvider` | телеметрия с семантическими ролями (`role:CpuTemperature`…) | Kraken, NVML, LHM, Win32, hwmon, /proc |
 | `IAioLcdDevice` | экран СЖО: кадр RGBA, яркость, возврат на экран прошивки | Kraken Z3/2023/2024 |
@@ -132,6 +132,16 @@ flowchart TB
 кадр `40 <direct ch | 0x80 apply | 0x10 overflow> <offset> <count> RGB×20`; канал платы — `0x04`. Прошивки `AULA3-AR32*`
 нумеруют effect-каналы ARGB с нуля. Команда сохранения в flash (`3F 55`) никогда не отправляется.
 
+**Kingston FURY DDR5 DRAM RGB (SMBus `0x60..0x63`)** — по 12 диодов на планку (`KingstonFuryDramProtocol`, по `KingstonFuryDRAMController` из OpenRGB):
+- **Шина:** на Windows — подписанные модули `SmbusPIIX4.bin` (порты 0/1 AMD FCH) и `SmbusI801.bin` через `\\?\GLOBALROOT\Device\PawnIO` с глобальным мьютексом `Access_SMBUS.HTP.Method`; на Linux — `/dev/i2c-*` (`i2c-piix4` / `i2c-i801`).
+- **Шесть барьеров безопасности (`SmbusSafetyGuard`):**
+  1. до открытия SMBus проверяется SMBIOS Type 17 (`KF5*` part number, 0 байт на шине, если планок нет);
+  2. жёсткий файрвол адресов разрешает только `0x60..0x63` (обращения к SPD5118 `0x50..0x57` и PMIC `0x48..0x4F` блокируются исключением до `DeviceIoControl`/`ioctl`);
+  3. белый список регистров: чтение `0x01..0x04` (сигнатура `"FURY"` в старшем байте слова) и `0x06` (`0x10` Beast, `0x11` Renegade, `0x12` Beast White, `0x15` Beast2); запись только в SRAM контроллера (`0x08` = `0x53`/`0x44`, `0x09` = `0x10` Direct, `0x0B` = `0x00`, `0x20` яркость, `0x27` число слотов, `0x50..0x73` RGB);
+  4. межпроцессный мьютекс `Access_SMBUS.HTP.Method`;
+  5. пауза `3 мс` через `IPrecisionTimer` (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`) только на границах транзакции (`0x08 = 0x53` / `0x44`), без задержки между регистрами `0x50..0x73` (по `Kingston Hyper Fury Ram.js` из SignalRGB — до 30 FPS плавного потока) + дифф-кэш регистров на каждый слот (неизменившиеся байты и повторные статичные кадры дают **0 транзакций SMBus**);
+  6. read-only диагностика `rigforge-scan smbus` проверяет SMBIOS, PawnIO и сигнатуру `"FURY"` без смены режима подсветки.
+
 ## UI (ui/)
 
 React 19 + TypeScript 6 (strict, `noUncheckedIndexedAccess`) + Vite 8 + Tailwind 4 + `@microsoft/signalr` + react-konva + zod.
@@ -185,6 +195,7 @@ dotnet run --project src/Host.Daemon
 cd ui; npm install; npm run dev
 # диагностика (dry-run, ничего не пишет в RGB/вентиляторы/LCD)
 dotnet run --project src/Tools.HardwareScanner -- hid
+dotnet run --project src/Tools.HardwareScanner -- smbus
 dotnet run --project src/Tools.HardwareScanner -- sensors --watch
 # тесты
 dotnet test --project tests/RigForge.UnitTests
@@ -199,16 +210,17 @@ Linux: `rigforge-scan udev -o 60-rigforge.rules` → `/etc/udev/rules.d/`, за�
 
 Проверено на целевом ПК (read-only/dry-run): обнаружены Kraken 2023 (`1E71:300E`, прошивка 2.0.0), NZXT RGB Controller (`1E71:2012`,
 2× F140 RGB), NZXT Control Hub (`1E71:2022`, 5 вентиляторных каналов, F120 RGB), ASUS Aura (`0B05:19AF`, `AULA3-AR32-0309`, 3 ARGB),
+Kingston FURY DDR5 RGB (`kingston-fury-ddr5:piix4-0:1-3`, шина `PIIX4 port 0` `0x0B00`, слоты `0x61` и `0x63`, модель `0x10`, `KF556C40-32`, 2×12 LED),
+Super I/O `Nuvoton NCT6701D` на `ASUS ROG STRIX B850-E GAMING WIFI` (7 каналов) и `AMD Ryzen 7 9800X3D` через PawnIO `2.2.0.0`,
 RTX 5070 Ti через NVML; статус Kraken и Control Hub разобран корректно. UI проверен в браузере против реального демона:
 живые сенсоры, раскладка реальных зон с потоковым LED-превью, кривая помпы (28,4 °C → 47 %), живое превью LCD.
 
-Живой тест (без dry-run, вентиляторы не трогались): rainbow-wave на Aura (плата + ARGB), на NZXT RGB Controller и Control Hub
-(контроллер подтверждает кадры отчётами `FF 01 … 22 10 / 22 A0`) и дашборд на экране Kraken 2023 (FW 2.x, поток RGB565 через WinUSB)
-подтверждены визуально; ошибок в логе нет, CPU 4,8 % одного ядра при реальной записи в USB.
+Живой тест (без dry-run, вентиляторы не трогались): плавный rainbow-wave на Aura (плата + ARGB), на NZXT RGB Controller и Control Hub
+(контроллер подтверждает кадры отчётами `FF 01 … 22 10 / 22 A0`), на планках ОЗУ Kingston FURY DDR5 RGB (`0x61` и `0x63` по SMBus через PawnIO, до 30 FPS без рывков)
+и дашборд на экране Kraken 2023 (FW 2.x, поток RGB565 через WinUSB) подтверждены визуально; ошибок в логе нет.
 
 Не проверено на железе: установка скважности помпы и вентиляторов (намеренно не трогались). Скважность для портов 4–5
 Control Hub — экстраполяция формата `62 01` на 5 каналов.
 
 Не реализовано: захват экрана на Linux (xdg-desktop-portal + PipeWire), Kraken X3 (`0x2007/0x2014`), подсветка кольца Kraken Elite,
-RGB ОЗУ Kingston FURY — управляется по SMBus, поэтому в живом тесте не светилась (план: мост к OpenRGB SDK, без SMBus-драйверов
-в процессе), управление вентиляторами GPU, Native AOT, восстановление яркости LCD, бывшей до запуска (сейчас выставляется из профиля, 80 %).
+управление вентиляторами GPU, Native AOT, восстановление яркости LCD, бывшей до запуска (сейчас выставляется из профиля, 80 %).

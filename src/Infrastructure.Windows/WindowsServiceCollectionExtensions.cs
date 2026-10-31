@@ -3,10 +3,12 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RigForge.Core.Interfaces;
+using RigForge.Infrastructure.CrossPlatform.Smbus;
 using RigForge.Infrastructure.CrossPlatform.Usb;
 using RigForge.Infrastructure.Windows.Capture;
 using RigForge.Infrastructure.Windows.Hardware;
 using RigForge.Infrastructure.Windows.Platform;
+using RigForge.Infrastructure.Windows.Smbus;
 using RigForge.Infrastructure.Windows.Usb;
 
 namespace RigForge.Infrastructure.Windows;
@@ -22,6 +24,7 @@ public static class WindowsServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton<IPrecisionTimer, WaitableTimerPrecisionTimer>());
         services.Replace(ServiceDescriptor.Singleton<IScreenCapturer, DxgiScreenCapturer>());
         services.Replace(ServiceDescriptor.Singleton<IUsbBulkTransportFactory, WinUsbBulkTransportFactory>());
+        services.Replace(ServiceDescriptor.Singleton<ISmbusControllerFactory, PawnIoSmbusControllerFactory>());
         services.AddSingleton<IDeviceProbe, WindowsHardwareProbe>();
 
         return services;

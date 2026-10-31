@@ -1,12 +1,15 @@
 using System.Globalization;
 using System.Text.Json;
 using HidSharp;
+using Microsoft.Extensions.DependencyInjection;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 using RigForge.Infrastructure.CrossPlatform.Asus;
 using RigForge.Infrastructure.CrossPlatform.Diagnostics;
 using RigForge.Infrastructure.CrossPlatform.Hid;
+using RigForge.Infrastructure.CrossPlatform.Kingston;
 using RigForge.Infrastructure.CrossPlatform.Nzxt;
+using RigForge.Infrastructure.CrossPlatform.Smbus;
 using RigForge.Infrastructure.Linux.Udev;
 
 namespace RigForge.Tools.HardwareScanner;
@@ -162,6 +165,64 @@ internal static class ConflictsCommand
 
         Console.WriteLine(warnings.Count == 0 ? "No conflicting software is running." : $"{warnings.Count} conflict(s) found.");
         return warnings.Count == 0 ? 0 : 2;
+    }
+}
+
+internal static class SmbusCommand
+{
+    public static int Run(bool verbose)
+    {
+        using var services = ScannerHost.Build(verbose);
+        var factory = services.GetRequiredService<ISmbusControllerFactory>();
+
+        Console.WriteLine($"SMBus backend: {factory.BackendName} (available: {factory.IsAvailable})");
+        Console.WriteLine($"Status:        {factory.DiagnosticStatus}");
+        Console.WriteLine();
+
+        var sticks = factory.GetInstalledMemory();
+        Console.WriteLine($"SMBIOS Type 17 memory modules ({sticks.Count}):");
+        foreach (var stick in sticks)
+        {
+            var tag = stick.IsKingstonFuryDdr5 ? " [Kingston FURY DDR5 match]" : string.Empty;
+            Console.WriteLine($"  - {stick.DeviceLocator} ({stick.BankLocator}): {stick.Manufacturer} {stick.PartNumber}, {stick.CapacityMegabytes} MB @ {stick.SpeedMegaTransfers} MT/s{tag}");
+        }
+
+        Console.WriteLine();
+        if (! sticks.Any(static s => s.IsKingstonFuryDdr5))
+        {
+            Console.WriteLine("No Kingston FURY DDR5 (KF5*) modules reported by SMBIOS; skipping SMBus scan (0 bytes sent on bus).");
+            return 0;
+        }
+
+        if (!factory.IsAvailable)
+        {
+            Console.WriteLine("SMBus backend is not ready; run as Administrator with PawnIO installed to probe 0x60..0x63.");
+            return 1;
+        }
+
+        var controllers = factory.OpenControllers();
+        Console.WriteLine($"Opened {controllers.Count} SMBus controller(s) (firewall locked to 0x60..0x63, SPD 0x50..0x57 & PMIC 0x48..0x4F blocked):");
+        try
+        {
+            foreach (var controller in controllers)
+            {
+                Console.WriteLine($"  Bus {controller.BusName}: {controller.Location}");
+                for (var slot = 0; slot < 4; slot++)
+                {
+                    var result = KingstonFuryDramProtocol.ProbeSlot(controller, slot);
+                    Console.WriteLine($"    slot {slot} (0x{result.Address:X2}): {result.Status} — {result.Detail}");
+                }
+            }
+        }
+        finally
+        {
+            foreach (var controller in controllers)
+            {
+                controller.Dispose();
+            }
+        }
+
+        return 0;
     }
 }
 

@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>RigForge.Infrastructure.Linux</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
