@@ -28,8 +28,9 @@ internal sealed class SysfsHwmonChip : ISensorProvider, IFanController
         {
             if (TryParseInput(file, "temp", out var index))
             {
-                var label = ReadLabel("temp", index) ?? $"Temperature {index}";
-                _sensors.Add((file, $"{id}/temp{index}", label, SensorKind.Temperature, RoleFor(chipName, label)));
+                var rawLabel = ReadLabel("temp", index);
+                var label = rawLabel ?? $"Temperature {index}";
+                _sensors.Add((file, $"{id}/temp{index}", label, SensorKind.Temperature, RoleFor(chipName, rawLabel ?? string.Empty)));
             }
             else if (TryParseInput(file, "fan", out index))
             {
@@ -142,10 +143,12 @@ internal sealed class SysfsHwmonChip : ISensorProvider, IFanController
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private static SensorRole RoleFor(string chip, string label) => (chip, label) switch
+    internal static SensorRole RoleFor(string chip, string label) => (chip, label) switch
     {
         ("k10temp" or "zenpower", "Tctl" or "Tdie") => SensorRole.CpuTemperature,
         ("coretemp", _) when label.StartsWith("Package id 0", StringComparison.Ordinal) => SensorRole.CpuTemperature,
+        ("amdgpu" or "radeon", "edge" or "") => SensorRole.GpuTemperature,
+        ("i915" or "xe", _) when label is "pkg" or "gpu" or "" => SensorRole.GpuTemperature,
         _ => SensorRole.None,
     };
 

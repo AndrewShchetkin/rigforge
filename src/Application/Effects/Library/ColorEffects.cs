@@ -1,4 +1,4 @@
-using SkiaSharp;
+using RigForge.Core.Models;
 
 namespace RigForge.Application.Effects.Library;
 
@@ -12,7 +12,7 @@ internal sealed class SolidColorEffect : IEffect
 
     public EffectDescriptor Descriptor => Info;
 
-    public void Render(SKCanvas canvas, in EffectFrameContext context) => canvas.Clear(context.Color(0));
+    public void Render(Span<byte> rgba, in EffectFrameContext context) => CanvasBuffer.Fill(rgba, context.Color(0));
 
     public void Dispose()
     {
@@ -31,14 +31,14 @@ internal sealed class BreathingEffect : IEffect
 
     public EffectDescriptor Descriptor => Info;
 
-    public void Render(SKCanvas canvas, in EffectFrameContext context)
+    public void Render(Span<byte> rgba, in EffectFrameContext context)
     {
         var phase = context.Time * Math.Max(context.Settings.Speed, 0.01f) / PeriodSeconds;
         var cycle = (long)Math.Floor(phase);
         var intensity = (float)((1 - Math.Cos((phase - cycle) * 2 * Math.PI)) / 2);
         var color = context.Color((int)(cycle % Math.Max(context.Colors.Count, 1)));
 
-        canvas.Clear(new SKColor((byte)(color.Red * intensity), (byte)(color.Green * intensity), (byte)(color.Blue * intensity)));
+        CanvasBuffer.Fill(rgba, new RgbColor((byte)(color.R * intensity), (byte)(color.G * intensity), (byte)(color.B * intensity)));
     }
 
     public void Dispose()
@@ -58,10 +58,10 @@ internal sealed class SpectrumCycleEffect : IEffect
 
     public EffectDescriptor Descriptor => Info;
 
-    public void Render(SKCanvas canvas, in EffectFrameContext context)
+    public void Render(Span<byte> rgba, in EffectFrameContext context)
     {
         var hue = (float)(context.Time * context.Settings.Speed * DegreesPerSecond % 360.0);
-        canvas.Clear(SKColor.FromHsv(hue, 100, 100));
+        CanvasBuffer.Fill(rgba, CanvasBuffer.FromHsv(hue, 100, 100));
     }
 
     public void Dispose()

@@ -1,5 +1,4 @@
 using RigForge.Core.Models;
-using SkiaSharp;
 
 namespace RigForge.Application.Effects.Library;
 
@@ -16,12 +15,12 @@ internal sealed class TemperatureEffect : IEffect
 
     public EffectDescriptor Descriptor => Info;
 
-    public void Render(SKCanvas canvas, in EffectFrameContext context)
+    public void Render(Span<byte> rgba, in EffectFrameContext context)
     {
         var settings = context.Settings;
         if (!context.Telemetry.TryResolve(settings.SensorSelector ?? DefaultSelector, out var reading) || context.Colors.Count == 0)
         {
-            canvas.Clear(context.Color(0));
+            CanvasBuffer.Fill(rgba, context.Color(0));
             return;
         }
 
@@ -31,17 +30,17 @@ internal sealed class TemperatureEffect : IEffect
 
         if (index < 0)
         {
-            canvas.Clear(context.Color(0));
+            CanvasBuffer.Fill(rgba, context.Color(0));
             return;
         }
 
         var from = context.Colors[index];
         var to = context.Colors[index + 1];
         var t = position - index;
-        canvas.Clear(new SKColor(
-            (byte)(from.Red + (to.Red - from.Red) * t),
-            (byte)(from.Green + (to.Green - from.Green) * t),
-            (byte)(from.Blue + (to.Blue - from.Blue) * t)));
+        CanvasBuffer.Fill(rgba, new RgbColor(
+            (byte)(from.R + (to.R - from.R) * t),
+            (byte)(from.G + (to.G - from.G) * t),
+            (byte)(from.B + (to.B - from.B) * t)));
     }
 
     public void Dispose()

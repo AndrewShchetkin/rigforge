@@ -34,8 +34,11 @@ public static class AuraUsbProtocol
     private const byte ApplyFlag = 0x80;
     private const byte OffsetOverflowFlag = 0x10;
 
-    /// <summary>Known mainboard controller PIDs (X570 era onwards).</summary>
-    public static readonly IReadOnlySet<int> MainboardProductIds = new HashSet<int> { 0x18F3, 0x1939, 0x19AF, 0x1AA6, 0x1BED };
+    /// <summary>Known mainboard controller PIDs (Z270/X570 era onwards).</summary>
+    public static readonly IReadOnlySet<int> MainboardProductIds = new HashSet<int>
+    {
+        0x1867, 0x1872, 0x18A3, 0x18A5, 0x18F3, 0x1939, 0x19AF, 0x1AA6, 0x1BED,
+    };
 
     public static byte[] FirmwareRequest() => Report(0x82);
 

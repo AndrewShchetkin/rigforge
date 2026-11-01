@@ -1,4 +1,8 @@
+using Microsoft.Extensions.Options;
 using RigForge.Core.Models;
+using RigForge.Infrastructure.CrossPlatform;
+using RigForge.Infrastructure.CrossPlatform.Hid;
+using RigForge.Infrastructure.CrossPlatform.Manifests;
 using RigForge.Infrastructure.CrossPlatform.Nzxt;
 
 namespace RigForge.UnitTests.Protocols;
@@ -134,6 +138,106 @@ public sealed class NzxtProtocolTests
         var report = NzxtProtocol.SmartDeviceFixedDuty(channel: 4, duty: 55);
 
         Assert.Equal(new byte[] { 0x62, 0x01, 0x10, 0, 0, 0, 0, 55 }, report[..8]);
+    }
+
+    [Fact]
+    public void Manifest_catalog_includes_built_ins_and_allows_json_directory_overrides()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"rigforge-manifests-{Guid.NewGuid():N}");
+        var devicesDir = Path.Combine(tempDir, "devices");
+        Directory.CreateDirectory(devicesDir);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(devicesDir, "custom.json"),
+                """
+                {
+                  "id": "custom-control-hub",
+                  "name": "Custom NZXT Control Hub",
+                  "vendor": "NZXT",
+                  "protocol": "NzxtHue2",
+                  "vendorId": 7793,
+                  "productId": 8226,
+                  "fanChannels": 6,
+                  "ledChannels": 6
+                }
+                """);
+
+            var catalog = new JsonDeviceManifestCatalog(Options.Create(new StorageOptions { DataDirectory = tempDir }));
+
+            Assert.Equal(9, catalog.ForProtocol(DeviceProtocolFamily.AsusAuraUsb).Count);
+            Assert.Equal(5, catalog.ForProtocol(DeviceProtocolFamily.NzxtKraken).Count);
+            Assert.Equal(18, catalog.ForProtocol(DeviceProtocolFamily.NzxtHue2).Count);
+
+            var aura = catalog.FindUsb(0x0B05, 0x1867);
+            Assert.NotNull(aura);
+            Assert.Equal(0xFF72, aura.UsagePage);
+            Assert.Equal(65, aura.MinOutputReportLength);
+
+            var kraken = catalog.FindUsb(0x1E71, 0x300C);
+            Assert.NotNull(kraken);
+            Assert.NotNull(kraken.Display);
+            Assert.Equal(640, kraken.Display.Width);
+            Assert.True(kraken.Display.Experimental);
+
+            var overridden = catalog.FindUsb(0x1E71, 0x2022);
+            Assert.NotNull(overridden);
+            Assert.Equal("Custom NZXT Control Hub", overridden.Name);
+            Assert.Equal(6, overridden.FanChannels);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Normalize_serial_or_hash_preserves_valid_serial_and_hashes_placeholders()
+    {
+        Assert.Equal("ABC12345", HidDeviceExtensions.NormalizeSerialOrHash("  ABC12345  ", @"\\?\hid#vid_1e71&pid_2022#1"));
+
+        var fromEmpty = HidDeviceExtensions.NormalizeSerialOrHash("", @"\\?\HID#VID_0B05&PID_19AF#7&1234");
+        var fromAuraPlaceholder = HidDeviceExtensions.NormalizeSerialOrHash("AURA LED Controller", @"\\?\hid#vid_0b05&pid_19af#7&1234");
+        var fromZeroPlaceholder = HidDeviceExtensions.NormalizeSerialOrHash("000000000000", @"\\?\hid#vid_0b05&pid_19af#7&1234");
+
+        Assert.StartsWith("path-", fromEmpty, StringComparison.Ordinal);
+        Assert.Equal(13, fromEmpty.Length);
+        Assert.Equal(fromEmpty, fromAuraPlaceholder);
+        Assert.Equal(fromEmpty, fromZeroPlaceholder);
+    }
+
+    [Fact]
+    public void Hue2_maps_unknown_accessories_and_resizes_zones()
+    {
+        using var hid = new HidReportChannel(Stream.Null);
+        var model = NzxtCatalog.Hue2Devices[0x2022];
+        var device = new NzxtHue2Device(
+            hid,
+            model,
+            id: "nzxt:2022:test",
+            firmware: "1.0.0",
+            accessories: [[0xFE], [0x13]],
+            fanChannels: 0,
+            fallbackDuty: 50,
+            dryRun: true);
+
+        Assert.Equal(2, device.Zones.Count);
+        Assert.Equal("Channel 1: Accessory 0xFE", device.Zones[0].Name);
+        Assert.Equal(12, device.Zones[0].LedCount);
+        Assert.Equal(LedTopology.Linear, device.Zones[0].Topology);
+        Assert.True(device.Zones[0].IsResizable);
+        Assert.Equal(NzxtProtocol.MaxLedsPerChannel, device.Zones[0].MaxLedCount);
+
+        Assert.True(device.TryResizeZone("led1", 50));
+        Assert.Equal(NzxtProtocol.MaxLedsPerChannel, device.Zones[0].LedCount);
+
+        Assert.True(device.TryResizeZone("led2", 10));
+        Assert.Equal(10, device.Zones[1].LedCount);
+        Assert.False(device.TryResizeZone("missing", 10));
     }
 
     private static byte[] Report(string hex)

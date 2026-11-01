@@ -10,6 +10,13 @@ internal sealed class SysfsHwmonProbe(IOptions<HardwareOptions> options) : IDevi
 
     public string Name => "Linux hwmon (sysfs)";
 
+    public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(
+        IReadOnlyList<IHardwareDevice> existingDevices,
+        CancellationToken cancellationToken) =>
+        existingDevices.Count > 0
+            ? Task.FromResult(existingDevices)
+            : ProbeAsync(cancellationToken);
+
     public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(CancellationToken cancellationToken)
     {
         var devices = new List<IHardwareDevice> { new LinuxSystemDevice() };

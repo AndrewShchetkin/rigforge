@@ -1,5 +1,4 @@
 using RigForge.Core.Models;
-using SkiaSharp;
 
 namespace RigForge.Application.Effects;
 
@@ -24,11 +23,11 @@ public readonly record struct EffectFrameContext(
     int Height,
     double Time,
     EffectSettings Settings,
-    IReadOnlyList<SKColor> Colors,
+    IReadOnlyList<RgbColor> Colors,
     TelemetrySnapshot Telemetry)
 {
-    public SKColor Color(int index) =>
-        Colors.Count == 0 ? SKColors.White : Colors[Math.Clamp(index, 0, Colors.Count - 1)];
+    public RgbColor Color(int index) =>
+        Colors.Count == 0 ? RgbColor.White : Colors[Math.Clamp(index, 0, Colors.Count - 1)];
 }
 
 /// <summary>
@@ -39,5 +38,5 @@ public interface IEffect : IDisposable
 {
     EffectDescriptor Descriptor { get; }
 
-    void Render(SKCanvas canvas, in EffectFrameContext context);
+    void Render(Span<byte> rgba, in EffectFrameContext context);
 }

@@ -1,11 +1,10 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
-using LibreHardwareMonitor.Hardware;
 using LibreHardwareMonitor.PawnIo;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
-using RigForge.Infrastructure.CrossPlatform.Kingston;
 using RigForge.Infrastructure.CrossPlatform.Smbus;
 
 namespace RigForge.Infrastructure.Windows.Smbus;
@@ -13,7 +12,7 @@ namespace RigForge.Infrastructure.Windows.Smbus;
 /// <summary>
 /// Opens AMD PIIX4 (ports 0 and 1) and Intel i801 SMBus controllers through the signed PawnIO driver
 /// using the signed modules embedded in <c>LibreHardwareMonitorLib</c>.
-/// Every transfer is gated by <see cref="SmbusSafetyGuard"/> and synchronized with the global
+/// Every transfer is gated by <see cref="SmbusAddressFirewall"/> and synchronized with the global
 /// <c>Access_SMBUS.HTP.Method</c> mutex shared by HWiNFO, LibreHardwareMonitor and OpenRGB.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -21,6 +20,8 @@ internal sealed partial class PawnIoSmbusControllerFactory(ILogger<PawnIoSmbusCo
 {
     private const string Piix4ResourceName = "LibreHardwareMonitor.Resources.PawnIo.SmbusPIIX4.bin";
     private const string I801ResourceName = "LibreHardwareMonitor.Resources.PawnIo.SmbusI801.bin";
+    private const uint RsmbSignature = 0x52534D42u; // 'RSMB'
+    private const int RawSmbiosHeaderBytes = 8;
 
     public string BackendName => "PawnIO";
 
@@ -44,22 +45,33 @@ internal sealed partial class PawnIoSmbusControllerFactory(ILogger<PawnIoSmbusCo
         }
     }
 
-    public IReadOnlyList<SmbiosMemoryStick> GetInstalledMemory()
+    public unsafe IReadOnlyList<SmbiosMemoryStick> GetInstalledMemory()
     {
         try
         {
-            var smbios = new SMBios();
-            return smbios.MemoryDevices
-                .Where(static d => d.Size > 0 && !string.IsNullOrWhiteSpace(d.PartNumber))
-                .Select(static d => new SmbiosMemoryStick(
-                    d.BankLocator ?? string.Empty,
-                    d.DeviceLocator ?? string.Empty,
-                    d.ManufacturerName ?? string.Empty,
-                    d.PartNumber.Trim(),
-                    d.SerialNumber ?? string.Empty,
-                    (int)d.Size,
-                    (int)(d.ConfiguredSpeed > 0 ? d.ConfiguredSpeed : d.Speed)))
-                .ToArray();
+            var size = GetSystemFirmwareTable(RsmbSignature, 0, null, 0);
+            if (size <= RawSmbiosHeaderBytes)
+            {
+                return [];
+            }
+
+            var buffer = new byte[size];
+            fixed (byte* pBuffer = buffer)
+            {
+                var written = GetSystemFirmwareTable(RsmbSignature, 0, pBuffer, size);
+                if (written <= RawSmbiosHeaderBytes || written > size)
+                {
+                    return [];
+                }
+
+                var declaredLength = BinaryPrimitives.ReadUInt32LittleEndian(buffer.AsSpan(4, 4));
+                var availableLength = (int)written - RawSmbiosHeaderBytes;
+                var tableLength = declaredLength > 0 && declaredLength <= (uint)availableLength
+                    ? (int)declaredLength
+                    : availableLength;
+
+                return SmbiosType17Parser.Parse(buffer.AsSpan(RawSmbiosHeaderBytes, tableLength));
+            }
         }
         catch (Exception ex)
         {
@@ -75,15 +87,19 @@ internal sealed partial class PawnIoSmbusControllerFactory(ILogger<PawnIoSmbusCo
             return [];
         }
 
-        var controllers = new List<ISmbusController>(3);
+        var controllers = new List<ISmbusController>(2);
 
         // AMD AM4/AM5 (FCH PIIX4): port 0 (0x0B00) and port 1 (0x0B20). Ports 2..4 are never touched.
-        for (var port = 0; port <= 1; port++)
+        // When PIIX4 port 0 opens on an AMD system, skip loading Intel SmbusI801.bin into PawnIO.
+        if (PawnIoSmbusController.TryOpenPiix4(0, logger) is { } piix4Port0)
         {
-            if (PawnIoSmbusController.TryOpenPiix4(port, logger) is { } piix4)
+            controllers.Add(piix4Port0);
+            if (PawnIoSmbusController.TryOpenPiix4(1, logger) is { } piix4Port1)
             {
-                controllers.Add(piix4);
+                controllers.Add(piix4Port1);
             }
+
+            return controllers;
         }
 
         // Intel PCH (i801)
@@ -94,6 +110,13 @@ internal sealed partial class PawnIoSmbusControllerFactory(ILogger<PawnIoSmbusCo
 
         return controllers;
     }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetSystemFirmwareTable", SetLastError = true)]
+    private static unsafe partial uint GetSystemFirmwareTable(
+        uint firmwareTableProviderSignature,
+        uint firmwareTableId,
+        byte* pFirmwareTableBuffer,
+        uint bufferSize);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Failed to read SMBIOS memory table")]
     private partial void LogSmbiosReadFailed(Exception exception);
@@ -114,6 +137,9 @@ internal sealed partial class PawnIoSmbusController : ISmbusController
     private const ulong SmbusWordData = 3;
 
     private static readonly Lock ProcessBusLock = new();
+
+    [ThreadStatic]
+    private static int _busLockDepth;
 
     private readonly SafeFileHandle _handle;
     private readonly Mutex? _sharedMutex;
@@ -181,68 +207,139 @@ internal sealed partial class PawnIoSmbusController : ISmbusController
         return new PawnIoSmbusController(handle, "i801", location);
     }
 
+    public IDisposable AcquireBusLock()
+    {
+        if (_busLockDepth > 0)
+        {
+            _busLockDepth++;
+            return new BusLockScope(default, isOuter: false);
+        }
+
+        ProcessBusLock.Enter();
+        SmbusMutexScope mutexScope = default;
+        try
+        {
+            mutexScope = SmbusMutexScope.Acquire(_sharedMutex);
+            _busLockDepth = 1;
+            return new BusLockScope(mutexScope, isOuter: true);
+        }
+        catch
+        {
+            mutexScope.Dispose();
+            ProcessBusLock.Exit();
+            throw;
+        }
+    }
+
     public bool TryWriteByteData(byte address, byte register, byte value)
     {
-        SmbusSafetyGuard.ValidateWrite(address, register, value, SmbusSafetyGuard.HardMaxAllowedAddress);
+        SmbusAddressFirewall.ValidateAddress(address);
+
+        if (_busLockDepth > 0)
+        {
+            return TryWriteByteDataCore(address, register, value);
+        }
 
         lock (ProcessBusLock)
         {
-            if (_disposed)
-            {
-                return false;
-            }
-
             using var mutexScope = SmbusMutexScope.Acquire(_sharedMutex);
-            Span<ulong> input =
-            [
-                address,
-                SmbusWrite,
-                register,
-                SmbusByteData,
-                value,
-                0,
-                0,
-                0,
-                0,
-            ];
-            Span<ulong> output = stackalloc ulong[5];
-            return TryExecute(_handle, "ioctl_smbus_xfer", input, output);
+            return TryWriteByteDataCore(address, register, value);
         }
+    }
+
+    private bool TryWriteByteDataCore(byte address, byte register, byte value)
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        Span<ulong> input =
+        [
+            address,
+            SmbusWrite,
+            register,
+            SmbusByteData,
+            value,
+            0,
+            0,
+            0,
+            0,
+        ];
+        Span<ulong> output = stackalloc ulong[5];
+        return TryExecute(_handle, "ioctl_smbus_xfer", input, output);
     }
 
     public bool TryReadWordData(byte address, byte register, out ushort value)
     {
-        SmbusSafetyGuard.ValidateRead(address, register, SmbusSafetyGuard.HardMaxAllowedAddress);
-        value = 0;
+        SmbusAddressFirewall.ValidateAddress(address);
+
+        if (_busLockDepth > 0)
+        {
+            return TryReadWordDataCore(address, register, out value);
+        }
 
         lock (ProcessBusLock)
         {
+            using var mutexScope = SmbusMutexScope.Acquire(_sharedMutex);
+            return TryReadWordDataCore(address, register, out value);
+        }
+    }
+
+    private bool TryReadWordDataCore(byte address, byte register, out ushort value)
+    {
+        value = 0;
+        if (_disposed)
+        {
+            return false;
+        }
+
+        Span<ulong> input =
+        [
+            address,
+            SmbusRead,
+            register,
+            SmbusWordData,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        Span<ulong> output = stackalloc ulong[5];
+        if (!TryExecute(_handle, "ioctl_smbus_xfer", input, output))
+        {
+            return false;
+        }
+
+        value = (ushort)(output[0] & 0xFFFF);
+        return true;
+    }
+
+    private sealed class BusLockScope(SmbusMutexScope mutexScope, bool isOuter) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
             if (_disposed)
             {
-                return false;
+                return;
             }
 
-            using var mutexScope = SmbusMutexScope.Acquire(_sharedMutex);
-            Span<ulong> input =
-            [
-                address,
-                SmbusRead,
-                register,
-                SmbusWordData,
-                0,
-                0,
-                0,
-                0,
-                0,
-            ];
-            Span<ulong> output = stackalloc ulong[5];
-            if (!TryExecute(_handle, "ioctl_smbus_xfer", input, output))
+            _disposed = true;
+            _busLockDepth--;
+            if (isOuter)
             {
-                return false;
+                try
+                {
+                    mutexScope.Dispose();
+                }
+                finally
+                {
+                    ProcessBusLock.Exit();
+                }
             }
-
-            value = (ushort)(output[0] & 0xFFFF);
-            return true;
         }
     }
 
@@ -295,7 +392,7 @@ internal sealed partial class PawnIoSmbusController : ISmbusController
 
     private static unsafe SafeFileHandle? TryLoadModule(string resourceName, ILogger logger)
     {
-        using var stream = typeof(SMBios).Assembly.GetManifestResourceStream(resourceName);
+        using var stream = typeof(PawnIo).Assembly.GetManifestResourceStream(resourceName);
         if (stream is null)
         {
             return null;

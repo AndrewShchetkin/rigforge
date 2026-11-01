@@ -19,12 +19,32 @@ public sealed class TelemetrySnapshot
         foreach (var reading in readings.OrderBy(r => r.Id, StringComparer.Ordinal))
         {
             _byId[reading.Id] = reading;
-            if (reading.Role != SensorRole.None)
+            if (reading.Role == SensorRole.None)
+            {
+                continue;
+            }
+
+            if (IsTemperatureRole(reading.Role))
+            {
+                if (!float.IsFinite(reading.Value))
+                {
+                    continue;
+                }
+
+                if (!_byRole.TryGetValue(reading.Role, out var current) || reading.Value > current.Value)
+                {
+                    _byRole[reading.Role] = reading;
+                }
+            }
+            else
             {
                 _byRole.TryAdd(reading.Role, reading);
             }
         }
     }
+
+    private static bool IsTemperatureRole(SensorRole role) =>
+        role is SensorRole.CpuTemperature or SensorRole.GpuTemperature or SensorRole.LiquidTemperature;
 
     public static TelemetrySnapshot Empty { get; } = new(DateTimeOffset.MinValue, []);
 

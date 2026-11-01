@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Microsoft.AspNetCore.SignalR;
 using RigForge.Application.AioDisplay;
 using RigForge.Application.Cooling;
@@ -29,6 +30,9 @@ internal sealed partial class UiBroadcastService(
 {
     private static readonly TimeSpan LedPreviewInterval = TimeSpan.FromMilliseconds(50);
 
+    private readonly Channel<bool> _subscriptionSignal = Channel.CreateBounded<bool>(
+        new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         telemetry.Updated += OnTelemetry;
@@ -36,21 +40,40 @@ internal sealed partial class UiBroadcastService(
         lcd.PreviewRendered += OnLcdPreview;
         profiles.Changed += OnProfileChanged;
         devices.DevicesChanged += OnStateChanged;
+        clients.SubscriptionsChanged += OnSubscriptionsChanged;
 
         try
         {
-            using var timer = new PeriodicTimer(LedPreviewInterval);
             IReadOnlyList<ZonePreview>? lastPreview = null;
-            while (await timer.WaitForNextTickAsync(stoppingToken))
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var preview = effects.LatestPreview;
-                if (preview.Count == 0 || ReferenceEquals(preview, lastPreview) || !clients.HasSubscribers(PreviewChannel.Leds))
+                while (!clients.HasSubscribers(PreviewChannel.Leds))
                 {
-                    continue;
+                    lastPreview = null;
+                    while (_subscriptionSignal.Reader.TryRead(out _))
+                    {
+                    }
+
+                    if (clients.HasSubscribers(PreviewChannel.Leds))
+                    {
+                        break;
+                    }
+
+                    await _subscriptionSignal.Reader.WaitToReadAsync(stoppingToken);
                 }
 
-                lastPreview = preview;
-                await SendAsync(hub.Clients.Group(ClientRegistry.GroupName(PreviewChannel.Leds)).LedPreview(DtoMapper.ToDto(preview)));
+                using var timer = new PeriodicTimer(LedPreviewInterval);
+                while (clients.HasSubscribers(PreviewChannel.Leds) && await timer.WaitForNextTickAsync(stoppingToken))
+                {
+                    var preview = effects.LatestPreview;
+                    if (preview.Count == 0 || ReferenceEquals(preview, lastPreview) || !clients.HasSubscribers(PreviewChannel.Leds))
+                    {
+                        continue;
+                    }
+
+                    lastPreview = preview;
+                    await SendAsync(hub.Clients.Group(ClientRegistry.GroupName(PreviewChannel.Leds)).LedPreview(DtoMapper.ToDto(preview)));
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -63,8 +86,11 @@ internal sealed partial class UiBroadcastService(
             lcd.PreviewRendered -= OnLcdPreview;
             profiles.Changed -= OnProfileChanged;
             devices.DevicesChanged -= OnStateChanged;
+            clients.SubscriptionsChanged -= OnSubscriptionsChanged;
         }
     }
+
+    private void OnSubscriptionsChanged() => _subscriptionSignal.Writer.TryWrite(true);
 
     private void OnTelemetry(TelemetrySnapshot snapshot)
     {
@@ -89,10 +115,22 @@ internal sealed partial class UiBroadcastService(
 
     private void OnStateChanged()
     {
-        if (clients.ClientCount > 0)
+        if (clients.ClientCount <= 0)
         {
-            _ = SendAsync(hub.Clients.All.StateChanged(state.Build()));
+            return;
         }
+
+        if (clients.ActiveMutationConnectionId is { } callerId)
+        {
+            if (clients.ClientCount > 1)
+            {
+                _ = SendAsync(hub.Clients.AllExcept(callerId).StateChanged(state.Build()));
+            }
+
+            return;
+        }
+
+        _ = SendAsync(hub.Clients.All.StateChanged(state.Build()));
     }
 
     private async Task SendAsync(Task send)

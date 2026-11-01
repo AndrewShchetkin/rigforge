@@ -4,19 +4,36 @@ using RigForge.Core.Models;
 namespace RigForge.Application.Effects;
 
 /// <summary>
-/// Precomputed canvas coordinates of every LED of one device, built from the zone placements.
+/// Precomputed canvas coordinates and integer bilinear taps of every LED of one device, built from the zone placements.
 /// Rebuilt only when the layout, the device list or a device's zones change.
 /// </summary>
 internal sealed class LedSamplePlan
 {
-    private LedSamplePlan(IRgbDevice device, IReadOnlyList<RgbZone> zones, int ledCount)
+    internal readonly record struct PrecomputedTap(
+        int P00,
+        int P10,
+        int P01,
+        int P11,
+        ushort W00,
+        ushort W10,
+        ushort W01,
+        ushort W11,
+        bool Enabled);
+
+    private int _canvasWidth;
+    private int _canvasHeight;
+
+    private LedSamplePlan(IRgbDevice device, IReadOnlyList<RgbZone> zones, int ledCount, int canvasWidth, int canvasHeight)
     {
         Device = device;
         Zones = zones;
         X = new float[ledCount];
         Y = new float[ledCount];
         Enabled = new bool[ledCount];
+        Taps = new PrecomputedTap[ledCount];
         Colors = new RgbColor[ledCount];
+        _canvasWidth = canvasWidth;
+        _canvasHeight = canvasHeight;
     }
 
     public IRgbDevice Device { get; }
@@ -31,15 +48,21 @@ internal sealed class LedSamplePlan
     /// <summary>False for LEDs of disabled or unplaced zones; they are driven black.</summary>
     public bool[] Enabled { get; }
 
+    public PrecomputedTap[] Taps { get; }
+
     /// <summary>Reusable output buffer for the sampled frame.</summary>
     public RgbColor[] Colors { get; }
 
     public bool IsStale => !ReferenceEquals(Zones, Device.Zones);
 
-    public static LedSamplePlan Build(IRgbDevice device, IReadOnlyDictionary<(string DeviceId, string ZoneId), ZonePlacement> placements)
+    public static LedSamplePlan Build(
+        IRgbDevice device,
+        IReadOnlyDictionary<(string DeviceId, string ZoneId), ZonePlacement> placements,
+        int canvasWidth = 320,
+        int canvasHeight = 180)
     {
         var zones = device.Zones;
-        var plan = new LedSamplePlan(device, zones, zones.Sum(z => z.LedCount));
+        var plan = new LedSamplePlan(device, zones, zones.Sum(z => z.LedCount), canvasWidth, canvasHeight);
 
         var index = 0;
         foreach (var zone in zones)
@@ -63,15 +86,33 @@ internal sealed class LedSamplePlan
             }
         }
 
+        plan.RebuildTaps(canvasWidth, canvasHeight);
         return plan;
     }
 
     /// <summary>Samples the rendered canvas (RGBA8888, opaque) for every LED and applies the brightness.</summary>
     public void Sample(ReadOnlySpan<byte> rgba, int width, int height, float brightness)
     {
-        for (var i = 0; i < Colors.Length; i++)
+        if (width != _canvasWidth || height != _canvasHeight)
         {
-            Colors[i] = Enabled[i] ? SampleBilinear(rgba, width, height, X[i], Y[i]).Scale(brightness) : RgbColor.Black;
+            RebuildTaps(width, height);
+        }
+
+        var taps = Taps;
+        var colors = Colors;
+        for (var i = 0; i < colors.Length; i++)
+        {
+            ref readonly var tap = ref taps[i];
+            if (!tap.Enabled)
+            {
+                colors[i] = RgbColor.Black;
+                continue;
+            }
+
+            var r = (byte)((rgba[tap.P00] * tap.W00 + rgba[tap.P10] * tap.W10 + rgba[tap.P01] * tap.W01 + rgba[tap.P11] * tap.W11 + 128) >> 8);
+            var g = (byte)((rgba[tap.P00 + 1] * tap.W00 + rgba[tap.P10 + 1] * tap.W10 + rgba[tap.P01 + 1] * tap.W01 + rgba[tap.P11 + 1] * tap.W11 + 128) >> 8);
+            var b = (byte)((rgba[tap.P00 + 2] * tap.W00 + rgba[tap.P10 + 2] * tap.W10 + rgba[tap.P01 + 2] * tap.W01 + rgba[tap.P11 + 2] * tap.W11 + 128) >> 8);
+            colors[i] = new RgbColor(r, g, b).Scale(brightness);
         }
     }
 
@@ -97,6 +138,51 @@ internal sealed class LedSamplePlan
             Blend(rgba, p00, p10, p01, p11, 0, fx, fy),
             Blend(rgba, p00, p10, p01, p11, 1, fx, fy),
             Blend(rgba, p00, p10, p01, p11, 2, fx, fy));
+    }
+
+    private void RebuildTaps(int width, int height)
+    {
+        _canvasWidth = width;
+        _canvasHeight = height;
+
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < Taps.Length; i++)
+        {
+            if (!Enabled[i])
+            {
+                Taps[i] = default;
+                continue;
+            }
+
+            var x = Math.Clamp(X[i] - 0.5f, 0f, width - 1);
+            var y = Math.Clamp(Y[i] - 0.5f, 0f, height - 1);
+
+            var x0 = (int)x;
+            var y0 = (int)y;
+            var x1 = Math.Min(x0 + 1, width - 1);
+            var y1 = Math.Min(y0 + 1, height - 1);
+
+            var fx256 = (int)((x - x0) * 256f + 0.5f);
+            var fy256 = (int)((y - y0) * 256f + 0.5f);
+            var invFx = 256 - fx256;
+            var invFy = 256 - fy256;
+
+            var w00 = (ushort)((invFx * invFy + 128) >> 8);
+            var w10 = (ushort)Math.Min((fx256 * invFy + 128) >> 8, 256 - w00);
+            var w01 = (ushort)Math.Min((invFx * fy256 + 128) >> 8, 256 - w00 - w10);
+            var w11 = (ushort)(256 - w00 - w10 - w01);
+
+            var p00 = (y0 * width + x0) * 4;
+            var p10 = (y0 * width + x1) * 4;
+            var p01 = (y1 * width + x0) * 4;
+            var p11 = (y1 * width + x1) * 4;
+
+            Taps[i] = new PrecomputedTap(p00, p10, p01, p11, w00, w10, w01, w11, Enabled: true);
+        }
     }
 
     private static byte Blend(ReadOnlySpan<byte> rgba, int p00, int p10, int p01, int p11, int channel, float fx, float fy)

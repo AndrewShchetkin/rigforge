@@ -16,6 +16,7 @@ export interface LedPreviewStore {
 
 export function createLedPreviewStore(): LedPreviewStore {
   let zones = new Map<string, Uint8Array>();
+  let rawByZone = new Map<string, string>();
   const listeners = new Set<() => void>();
 
   const notify = () => {
@@ -27,18 +28,47 @@ export function createLedPreviewStore(): LedPreviewStore {
   return {
     publish: (frame) => {
       const next = new Map<string, Uint8Array>();
+      const nextRaw = new Map<string, string>();
+      let changed = false;
+
       for (const zone of frame.zones) {
+        const key = zoneKey(zone.deviceId, zone.zoneId);
+        const existing = zones.get(key);
+        if (existing && rawByZone.get(key) === zone.colors) {
+          next.set(key, existing);
+          nextRaw.set(key, zone.colors);
+          continue;
+        }
+
         const colors = decodeBase64(zone.colors);
         if (colors) {
-          next.set(zoneKey(zone.deviceId, zone.zoneId), colors);
+          next.set(key, colors);
+          nextRaw.set(key, zone.colors);
+          changed = true;
         }
       }
+
+      if (!changed && next.size === zones.size) {
+        for (const key of zones.keys()) {
+          if (!next.has(key)) {
+            changed = true;
+            break;
+          }
+        }
+      } else if (next.size !== zones.size) {
+        changed = true;
+      }
+
       zones = next;
-      notify();
+      rawByZone = nextRaw;
+      if (changed) {
+        notify();
+      }
     },
     clear: () => {
-      if (zones.size > 0) {
+      if (zones.size > 0 || rawByZone.size > 0) {
         zones = new Map();
+        rawByZone = new Map();
         notify();
       }
     },

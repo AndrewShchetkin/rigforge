@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RigForge.Application.Devices;
@@ -26,6 +27,8 @@ public sealed partial class LcdRenderEngine(
 
     private readonly SensorHistory _history = new(options.Value.HistorySamples);
     private readonly HashSet<string> _failingDevices = new(StringComparer.Ordinal);
+    private readonly Channel<bool> _wakeSignal = Channel.CreateBounded<bool>(
+        new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private volatile bool _previewRequested;
 
     /// <summary>Raised with a PNG of the latest frame while <see cref="PreviewRequested"/> is set.</summary>
@@ -34,12 +37,31 @@ public sealed partial class LcdRenderEngine(
     public bool PreviewRequested
     {
         get => _previewRequested;
-        set => _previewRequested = value;
+        set
+        {
+            var previous = _previewRequested;
+            _previewRequested = value;
+            if (previous != value)
+            {
+                SignalWake();
+            }
+        }
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        telemetry.Updated += RecordHistory;
+        void OnProfileChanged(RigProfile _) => SignalWake();
+        void OnDevicesChanged() => SignalWake();
+        void OnTelemetryUpdated(TelemetrySnapshot snapshot)
+        {
+            RecordHistory(snapshot);
+            SignalWake();
+        }
+
+        profiles.Changed += OnProfileChanged;
+        devices.DevicesChanged += OnDevicesChanged;
+        telemetry.Updated += OnTelemetryUpdated;
+
         var renderers = new Dictionary<(int Width, int Height), LcdFrameRenderer>();
         var state = new LoopState();
 
@@ -47,8 +69,17 @@ public sealed partial class LcdRenderEngine(
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                DrainWakeSignals();
                 var settings = profiles.Current.Lcd;
                 var lcds = devices.LcdDevices.ToList();
+
+                if (lcds.Count == 0 && !_previewRequested)
+                {
+                    DisposeRenderers(renderers);
+                    state = new LoopState();
+                    await WaitForWakeAsync(cancellationToken);
+                    continue;
+                }
 
                 if (!ReferenceEquals(state.Devices, devices.Devices))
                 {
@@ -74,11 +105,10 @@ public sealed partial class LcdRenderEngine(
         }
         finally
         {
-            telemetry.Updated -= RecordHistory;
-            foreach (var renderer in renderers.Values)
-            {
-                renderer.Dispose();
-            }
+            profiles.Changed -= OnProfileChanged;
+            devices.DevicesChanged -= OnDevicesChanged;
+            telemetry.Updated -= OnTelemetryUpdated;
+            DisposeRenderers(renderers);
 
             using var timeout = new CancellationTokenSource(ShutdownTimeout);
             foreach (var lcd in devices.LcdDevices)
@@ -97,6 +127,11 @@ public sealed partial class LcdRenderEngine(
     {
         var snapshot = telemetry.Latest;
         var now = timeProvider.GetUtcNow();
+        var previewRequested = _previewRequested;
+        var previewJustEnabled = previewRequested && !state.PreviewActive;
+        var contentChanged = !ReferenceEquals(settings, state.Settings) || snapshot.Timestamp != state.TelemetryTimestamp;
+
+        PruneUnusedRenderers(renderers, lcds, settings.Mode, previewRequested);
 
         if (settings.Mode == LcdMode.BuiltInLiquid)
         {
@@ -110,26 +145,36 @@ public sealed partial class LcdRenderEngine(
                 state.BuiltInActive = true;
             }
 
-            if (_previewRequested)
+            if (previewRequested && (contentChanged || previewJustEnabled))
             {
                 var preview = GetRenderer(renderers, PreviewSize, PreviewSize);
                 preview.Render(settings, snapshot, []);
                 PreviewRendered?.Invoke(preview.EncodePng());
             }
 
+            state.Settings = settings;
+            state.TelemetryTimestamp = snapshot.Timestamp;
+            state.PreviewActive = previewRequested;
             return;
         }
 
         state.BuiltInActive = false;
-        var contentChanged = !ReferenceEquals(settings, state.Settings) || snapshot.Timestamp != state.TelemetryTimestamp;
         var keepAliveDue = now - state.LastPushAt >= options.Value.KeepAliveInterval;
-        var history = _history.Snapshot();
+        if (!contentChanged && !keepAliveDue && !previewJustEnabled)
+        {
+            state.PreviewActive = previewRequested;
+            return;
+        }
+
+        float[]? history = null;
         byte[]? png = null;
 
         foreach (var group in lcds.GroupBy(l => (l.Lcd.Width, l.Lcd.Height)))
         {
             var renderer = GetRenderer(renderers, group.Key.Width, group.Key.Height);
-            var frame = renderer.Render(settings, snapshot, history);
+            var frame = contentChanged || !renderer.HasRenderedFrame
+                ? renderer.Render(settings, snapshot, history ??= _history.Snapshot())
+                : renderer.LastFrame;
 
             if (contentChanged || keepAliveDue)
             {
@@ -139,7 +184,7 @@ public sealed partial class LcdRenderEngine(
                 }
             }
 
-            if (_previewRequested && png is null)
+            if (previewRequested && (contentChanged || previewJustEnabled) && png is null)
             {
                 png = renderer.EncodePng();
             }
@@ -152,16 +197,75 @@ public sealed partial class LcdRenderEngine(
             state.LastPushAt = now;
         }
 
-        if (_previewRequested)
+        if (previewRequested && (contentChanged || previewJustEnabled))
         {
             if (png is null)
             {
                 var preview = GetRenderer(renderers, PreviewSize, PreviewSize);
-                preview.Render(settings, snapshot, history);
+                if (contentChanged || !preview.HasRenderedFrame)
+                {
+                    preview.Render(settings, snapshot, history ??= _history.Snapshot());
+                }
+
                 png = preview.EncodePng();
             }
 
             PreviewRendered?.Invoke(png);
+        }
+
+        state.PreviewActive = previewRequested;
+    }
+
+    private void SignalWake() => _wakeSignal.Writer.TryWrite(true);
+
+    private void DrainWakeSignals()
+    {
+        while (_wakeSignal.Reader.TryRead(out _))
+        {
+        }
+    }
+
+    private async Task WaitForWakeAsync(CancellationToken cancellationToken)
+    {
+        if (await _wakeSignal.Reader.WaitToReadAsync(cancellationToken))
+        {
+            _wakeSignal.Reader.TryRead(out _);
+        }
+    }
+
+    private static void DisposeRenderers(Dictionary<(int Width, int Height), LcdFrameRenderer> renderers)
+    {
+        foreach (var renderer in renderers.Values)
+        {
+            renderer.Dispose();
+        }
+
+        renderers.Clear();
+    }
+
+    private static void PruneUnusedRenderers(
+        Dictionary<(int Width, int Height), LcdFrameRenderer> renderers,
+        List<IAioLcdDevice> lcds,
+        LcdMode mode,
+        bool previewRequested)
+    {
+        if (renderers.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var key in renderers.Keys.ToArray())
+        {
+            var needed = mode == LcdMode.BuiltInLiquid
+                ? previewRequested && key == (PreviewSize, PreviewSize)
+                : lcds.Count > 0
+                    ? lcds.Any(l => l.Lcd.Width == key.Width && l.Lcd.Height == key.Height)
+                    : previewRequested && key == (PreviewSize, PreviewSize);
+
+            if (!needed && renderers.Remove(key, out var unused))
+            {
+                unused.Dispose();
+            }
         }
     }
 
@@ -217,6 +321,8 @@ public sealed partial class LcdRenderEngine(
         public int? Brightness { get; set; }
 
         public bool BuiltInActive { get; set; }
+
+        public bool PreviewActive { get; set; }
 
         public LcdSettings? Settings { get; set; }
 

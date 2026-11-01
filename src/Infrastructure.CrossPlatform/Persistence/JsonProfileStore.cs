@@ -37,6 +37,17 @@ internal sealed class JsonProfileStore(IOptions<StorageOptions> options) : IProf
         File.Move(temporary, FilePath, overwrite: true);
     }
 
+    public Task BackupCorruptAsync(CancellationToken cancellationToken)
+    {
+        if (File.Exists(FilePath))
+        {
+            var backupPath = $"{FilePath}.corrupt.{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+            File.Copy(FilePath, backupPath, overwrite: true);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public static string ResolveDirectory(string? configured)
     {
         if (!string.IsNullOrWhiteSpace(configured))

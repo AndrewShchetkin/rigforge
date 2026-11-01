@@ -1,3 +1,4 @@
+using System.Runtime;
 using Microsoft.Extensions.Logging;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
@@ -13,54 +14,84 @@ public sealed partial class DeviceManager(IEnumerable<IDeviceProbe> probes, ILog
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(20);
 
     private readonly SemaphoreSlim _scanLock = new(1, 1);
-    private volatile IReadOnlyList<IHardwareDevice> _devices = [];
+    private readonly Dictionary<IDeviceProbe, IReadOnlyList<IHardwareDevice>> _byProbe = [];
+    private volatile DeviceSnapshot _snapshot = DeviceSnapshot.Empty;
 
     public event Action? DevicesChanged;
 
-    public IReadOnlyList<IHardwareDevice> Devices => _devices;
+    public IReadOnlyList<IHardwareDevice> Devices => _snapshot.All;
 
     // A driver may implement an interface its particular hardware lacks (e.g. a Kraken whose screen
     // endpoint is busy), so the capability flags decide which views a device appears in.
-    public IEnumerable<IRgbDevice> RgbDevices => With<IRgbDevice>(DeviceCapabilities.Rgb);
+    public IReadOnlyList<IRgbDevice> RgbDevices => _snapshot.RgbDevices;
 
-    public IEnumerable<IFanController> FanControllers => With<IFanController>(DeviceCapabilities.FanControl);
+    public IReadOnlyList<IFanController> FanControllers => _snapshot.FanControllers;
 
-    public IEnumerable<ISensorProvider> SensorProviders => With<ISensorProvider>(DeviceCapabilities.Sensors);
+    public IReadOnlyList<ISensorProvider> SensorProviders => _snapshot.SensorProviders;
 
-    public IEnumerable<IAioLcdDevice> LcdDevices => With<IAioLcdDevice>(DeviceCapabilities.Lcd);
+    public IReadOnlyList<IAioLcdDevice> LcdDevices => _snapshot.LcdDevices;
 
-    public IHardwareDevice? Find(string deviceId) => _devices.FirstOrDefault(d => d.Id == deviceId);
+    public IHardwareDevice? Find(string deviceId) => _snapshot.All.FirstOrDefault(d => d.Id == deviceId);
 
-    /// <summary>Releases all current devices and runs every probe again (in parallel).</summary>
+    /// <summary>Runs every probe in parallel, keeping unchanged devices alive and disposing only removed ones.</summary>
     public async Task ScanAsync(CancellationToken cancellationToken)
     {
         await _scanLock.WaitAsync(cancellationToken);
         try
         {
-            // Devices hold exclusive handles (WinUSB, hidraw), so they must be released before probing again.
-            var previous = _devices;
-            _devices = [];
-            await DisposeAllAsync(previous);
+            var previous = _snapshot.All;
+            var previousSet = new HashSet<IHardwareDevice>(previous, ReferenceEqualityComparer.Instance);
 
-            var results = await Task.WhenAll(probes.Select(probe => RunProbeAsync(probe, cancellationToken)));
+            var results = await Task.WhenAll(
+                probes.Select(probe => RunProbeAsync(probe, _byProbe.GetValueOrDefault(probe, []), cancellationToken)));
 
             var unique = new List<IHardwareDevice>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var device in results.SelectMany(r => r))
+            var addedCount = 0;
+
+            foreach (var (probe, probeDevices) in results)
             {
-                if (seen.Add(device.Id))
+                var acceptedForProbe = new List<IHardwareDevice>(probeDevices.Count);
+                foreach (var device in probeDevices)
                 {
-                    unique.Add(device);
+                    if (seen.Add(device.Id))
+                    {
+                        unique.Add(device);
+                        acceptedForProbe.Add(device);
+                        if (!previousSet.Contains(device))
+                        {
+                            addedCount++;
+                            LogDeviceDetected(device.Name, device.Id, probe.Name, device.Capabilities.ToString());
+                        }
+                    }
+                    else
+                    {
+                        LogDuplicateDevice(device.Id);
+                        if (!previousSet.Contains(device))
+                        {
+                            await DisposeAllAsync([device]);
+                        }
+                    }
                 }
-                else
-                {
-                    LogDuplicateDevice(device.Id);
-                    await device.DisposeAsync();
-                }
+
+                _byProbe[probe] = acceptedForProbe;
             }
 
-            _devices = unique;
+            var retainedSet = new HashSet<IHardwareDevice>(unique, ReferenceEqualityComparer.Instance);
+            var removed = previous.Where(d => !retainedSet.Contains(d)).ToArray();
+            if (removed.Length > 0)
+            {
+                await DisposeAllAsync(removed);
+            }
+
+            _snapshot = DeviceSnapshot.Create(unique);
             LogScanCompleted(unique.Count);
+
+            if (addedCount > 0 || removed.Length > 0)
+            {
+                GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            }
         }
         finally
         {
@@ -75,8 +106,9 @@ public sealed partial class DeviceManager(IEnumerable<IDeviceProbe> probes, ILog
         await _scanLock.WaitAsync();
         try
         {
-            var devices = _devices;
-            _devices = [];
+            var devices = _snapshot.All;
+            _snapshot = DeviceSnapshot.Empty;
+            _byProbe.Clear();
             await DisposeAllAsync(devices);
         }
         finally
@@ -85,33 +117,48 @@ public sealed partial class DeviceManager(IEnumerable<IDeviceProbe> probes, ILog
         }
     }
 
-    private IEnumerable<T> With<T>(DeviceCapabilities capability) =>
-        _devices.OfType<T>().Where(d => ((IHardwareDevice)d!).Capabilities.HasFlag(capability));
+    private sealed record DeviceSnapshot(
+        IReadOnlyList<IHardwareDevice> All,
+        IReadOnlyList<IRgbDevice> RgbDevices,
+        IReadOnlyList<IFanController> FanControllers,
+        IReadOnlyList<ISensorProvider> SensorProviders,
+        IReadOnlyList<IAioLcdDevice> LcdDevices)
+    {
+        public static DeviceSnapshot Empty { get; } = new([], [], [], [], []);
 
-    private async Task<IReadOnlyList<IHardwareDevice>> RunProbeAsync(IDeviceProbe probe, CancellationToken cancellationToken)
+        public static DeviceSnapshot Create(IReadOnlyList<IHardwareDevice> devices) => new(
+            devices,
+            With<IRgbDevice>(devices, DeviceCapabilities.Rgb),
+            With<IFanController>(devices, DeviceCapabilities.FanControl),
+            With<ISensorProvider>(devices, DeviceCapabilities.Sensors),
+            With<IAioLcdDevice>(devices, DeviceCapabilities.Lcd));
+
+        private static IReadOnlyList<T> With<T>(IReadOnlyList<IHardwareDevice> devices, DeviceCapabilities capability) =>
+            devices.Where(d => d.Capabilities.HasFlag(capability)).OfType<T>().ToArray();
+    }
+
+    private async Task<(IDeviceProbe Probe, IReadOnlyList<IHardwareDevice> Devices)> RunProbeAsync(
+        IDeviceProbe probe,
+        IReadOnlyList<IHardwareDevice> existingForProbe,
+        CancellationToken cancellationToken)
     {
         try
         {
             // Probes may block on synchronous HID I/O, so run them off the caller's thread.
-            var devices = await Task.Run(() => probe.ProbeAsync(cancellationToken), cancellationToken)
+            var devices = await Task.Run(() => probe.ProbeAsync(existingForProbe, cancellationToken), cancellationToken)
                 .WaitAsync(ProbeTimeout, cancellationToken);
 
-            foreach (var device in devices)
-            {
-                LogDeviceDetected(device.Name, device.Id, probe.Name, device.Capabilities.ToString());
-            }
-
-            return devices;
+            return (probe, devices);
         }
         catch (TimeoutException)
         {
             LogProbeTimedOut(probe.Name, ProbeTimeout.TotalSeconds);
-            return [];
+            return (probe, []);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             LogProbeFailed(ex, probe.Name);
-            return [];
+            return (probe, []);
         }
     }
 

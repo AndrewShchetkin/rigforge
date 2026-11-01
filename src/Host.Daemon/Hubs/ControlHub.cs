@@ -48,6 +48,7 @@ public sealed class ControlHub(
 
     public async Task<SystemStateDto> RescanDevices()
     {
+        using var _ = clients.BeginMutationScope(Context.ConnectionId);
         await devices.ScanAsync(Context.ConnectionAborted);
         return state.Build();
     }
@@ -69,6 +70,7 @@ public sealed class ControlHub(
 
     private async Task<SystemStateDto> ApplyAsync<T>(T argument, Func<ProfileService, T, CancellationToken, Task<ProfileUpdateResult>> command)
     {
+        using var _ = clients.BeginMutationScope(Context.ConnectionId);
         var result = await command(profiles, argument, Context.ConnectionAborted);
         if (!result.IsValid)
         {

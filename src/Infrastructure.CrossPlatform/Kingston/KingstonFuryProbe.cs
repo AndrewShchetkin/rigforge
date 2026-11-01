@@ -22,6 +22,13 @@ internal sealed partial class KingstonFuryProbe(
 
     public string Name => "Kingston FURY DDR5 DRAM (SMBus)";
 
+    public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(
+        IReadOnlyList<IHardwareDevice> existingDevices,
+        CancellationToken cancellationToken) =>
+        existingDevices.Count > 0
+            ? Task.FromResult(existingDevices)
+            : ProbeAsync(cancellationToken);
+
     public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(CancellationToken cancellationToken)
     {
         var settings = options.Value;

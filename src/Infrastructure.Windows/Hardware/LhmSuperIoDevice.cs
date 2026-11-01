@@ -28,6 +28,11 @@ internal sealed class LhmSuperIoDevice : ISensorProvider, IFanController
         lock (session.Sync)
         {
             hardware.Update();
+            foreach (var sensor in hardware.Sensors)
+            {
+                sensor.ValuesTimeWindow = TimeSpan.Zero;
+            }
+
             _controls = allowFanControl
                 ? hardware.Sensors.Where(s => s.SensorType == SensorType.Control && s.Control is not null)
                     .ToDictionary(s => LibreHardwareMonitorSession.SensorKey(s), StringComparer.Ordinal)
@@ -72,6 +77,8 @@ internal sealed class LhmSuperIoDevice : ISensorProvider, IFanController
             _hardware.Update();
             foreach (var sensor in _hardware.Sensors)
             {
+                sensor.ValuesTimeWindow = TimeSpan.Zero;
+
                 if (sensor.Value is { } value
                     && sensor.SensorType is SensorType.Temperature or SensorType.Fan or SensorType.Control
                     && LibreHardwareMonitorSession.MapKind(sensor.SensorType) is { } kind

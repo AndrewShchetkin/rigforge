@@ -20,6 +20,7 @@ public sealed partial class TelemetryService(
 {
     private readonly Dictionary<string, SensorReading> _readings = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _failingProviders = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _providerGates = new(StringComparer.Ordinal);
     private volatile TelemetrySnapshot _latest = TelemetrySnapshot.Empty;
 
     public event Action<TelemetrySnapshot>? Updated;
@@ -38,7 +39,7 @@ public sealed partial class TelemetryService(
 
     public async Task PollOnceAsync(CancellationToken cancellationToken)
     {
-        var providers = devices.SensorProviders.ToArray();
+        var providers = devices.SensorProviders;
         var results = await Task.WhenAll(providers.Select(p => ReadProviderAsync(p, cancellationToken)));
 
         var now = timeProvider.GetUtcNow();
@@ -60,10 +61,32 @@ public sealed partial class TelemetryService(
 
     private async Task<IReadOnlyList<SensorReading>> ReadProviderAsync(ISensorProvider provider, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        var gate = _providerGates.GetOrAdd(provider.Id, static _ => new SemaphoreSlim(1, 1));
+        if (!gate.Wait(0))
+        {
+            if (_failingProviders.TryAdd(provider.Id, 0))
+            {
+                LogProviderBusy(provider.Id);
+            }
+
+            return [];
+        }
+
         try
         {
             // Drivers block on HID I/O; Task.Run keeps providers parallel and lets the timeout fire.
-            var readings = await Task.Run(() => provider.ReadSensorsAsync(cancellationToken).AsTask(), cancellationToken)
+            var readings = await Task.Run(async () =>
+                {
+                    try
+                    {
+                        return await provider.ReadSensorsAsync(cancellationToken);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                })
                 .WaitAsync(options.Value.ProviderTimeout, cancellationToken);
 
             if (_failingProviders.TryRemove(provider.Id, out _))
@@ -84,6 +107,9 @@ public sealed partial class TelemetryService(
             return [];
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Previous sensor read from {Provider} is still running; skipping poll")]
+    private partial void LogProviderBusy(string provider);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Reading sensors from {Provider} failed; will keep retrying")]
     private partial void LogProviderFailed(Exception exception, string provider);

@@ -33,6 +33,9 @@ public static class UdevRulesGenerator
             Line(builder);
         }
 
+        Line(builder, "# Chipset SMBus / i2c-dev adapters (Kingston FURY DDR5 DRAM RGB).");
+        Line(builder, "KERNEL==\"i2c-[0-9]*\", SUBSYSTEM==\"i2c-dev\", TAG+=\"uaccess\"");
+        Line(builder);
         Line(builder, "# Optional: allow members of group \"rigforge\" to drive motherboard PWM outputs through hwmon.");
         Line(builder, "# ACTION==\"add\", SUBSYSTEM==\"hwmon\", RUN+=\"/bin/sh -c 'chgrp rigforge /sys%p/pwm* && chmod g+w /sys%p/pwm*'\"");
 

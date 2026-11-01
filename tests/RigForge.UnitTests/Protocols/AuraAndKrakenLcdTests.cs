@@ -1,6 +1,9 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RigForge.Core.Models;
 using RigForge.Infrastructure.CrossPlatform.Asus;
+using RigForge.Infrastructure.CrossPlatform.Hid;
 using RigForge.Infrastructure.CrossPlatform.Nzxt;
+using RigForge.Infrastructure.CrossPlatform.Usb;
 
 namespace RigForge.UnitTests.Protocols;
 
@@ -103,5 +106,105 @@ public sealed class KrakenLcdTests
         buckets[3][19] = 0xFF;
 
         Assert.Equal(0x10, KrakenLcdUploader.BucketMemoryOffset(buckets, index: 3, sizeKb: 226));
+    }
+
+    [Fact]
+    public void First_frame_retry_deletes_bucket_zero_before_recreating_it()
+    {
+        var stream = new FakeKrakenHidStream { FailFirstDisplaySwitch = true };
+        using var hid = new HidReportChannel(stream, 64, 64);
+        var bulk = new NullUsbBulkTransport();
+        using var uploader = new KrakenLcdUploader(hid, bulk, width: 1, height: 1, useRgb565Stream: false, NullLogger.Instance);
+        var frame = new byte[] { 255, 0, 0, 255 };
+
+        Assert.Throws<IOException>(() => uploader.Upload(frame));
+
+        var writesBeforeRetry = stream.WrittenReports.Count;
+        uploader.Upload(frame);
+
+        var retryReports = stream.WrittenReports.Skip(writesBeforeRetry).ToList();
+        var deleteBucket0Index = retryReports.FindIndex(r => r[0] == 0x32 && r[1] == 0x02 && r[2] == 0x00);
+        var setupBucket0Index = retryReports.FindIndex(r => r[0] == 0x32 && r[1] == 0x01 && r[2] == 0x00);
+
+        Assert.True(deleteBucket0Index >= 0, "Expected DeleteBucket(0) on retry.");
+        Assert.True(setupBucket0Index > deleteBucket0Index, "Expected DeleteBucket(0) before bucket 0 setup on retry.");
+    }
+
+    private sealed class NullUsbBulkTransport : IUsbBulkTransport
+    {
+        public void Write(ReadOnlySpan<byte> data)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FakeKrakenHidStream : Stream
+    {
+        private readonly Queue<byte[]> _responses = new();
+        private bool _failedDisplaySwitch;
+
+        public bool FailFirstDisplaySwitch { get; init; }
+
+        public List<byte[]> WrittenReports { get; } = [];
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => true;
+
+        public override long Length => 0;
+
+        public override long Position { get; set; }
+
+        public override int ReadTimeout { get; set; }
+
+        public override int WriteTimeout { get; set; }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_responses.Count == 0)
+            {
+                throw new TimeoutException();
+            }
+
+            var next = _responses.Dequeue();
+            var toCopy = Math.Min(count, next.Length);
+            Array.Copy(next, 0, buffer, offset, toCopy);
+            return toCopy;
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            var report = buffer.AsSpan(offset, count).ToArray();
+            WrittenReports.Add(report);
+
+            var response = new byte[64];
+            response[0] = (byte)(report[0] + 1);
+            response[1] = report[1];
+            response[14] = 0x01;
+
+            if (FailFirstDisplaySwitch && !_failedDisplaySwitch && report[0] == 0x38 && report[1] == 0x01 && report[2] == 0x04)
+            {
+                _failedDisplaySwitch = true;
+                response[14] = 0x00;
+            }
+
+            if (report[0] is 0x32 or 0x36 or 0x38 && !(report[0] == 0x36 && report[1] == 0x02))
+            {
+                _responses.Enqueue(response);
+            }
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

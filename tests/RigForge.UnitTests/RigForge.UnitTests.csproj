@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Application\RigForge.Application.csproj" />
     <ProjectReference Include="..\..\src\Core\RigForge.Core.csproj" />
+    <ProjectReference Include="..\..\src\Host.Daemon\RigForge.Host.Daemon.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure.CrossPlatform\RigForge.Infrastructure.CrossPlatform.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure.Linux\RigForge.Infrastructure.Linux.csproj" />
   </ItemGroup>

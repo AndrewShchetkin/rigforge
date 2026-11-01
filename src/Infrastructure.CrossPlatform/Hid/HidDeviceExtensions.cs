@@ -7,6 +7,31 @@ public static class HidDeviceExtensions
     /// <summary>Serial number, or an empty string when the device does not expose (or refuses to report) one.</summary>
     public static string SafeSerialNumber(this HidDevice device) => Safe(device.GetSerialNumber);
 
+    public static string StableInstanceKey(this HidDevice device) => NormalizeSerialOrHash(device.SafeSerialNumber(), device.DevicePath);
+
+    public static string NormalizeSerialOrHash(string? serial, string devicePath)
+    {
+        var trimmed = serial?.Trim() ?? string.Empty;
+        if (trimmed.Length > 0 && !IsPlaceholderSerial(trimmed))
+        {
+            return trimmed;
+        }
+
+        var hash = 2166136261u;
+        foreach (var b in System.Text.Encoding.UTF8.GetBytes((devicePath ?? string.Empty).ToLowerInvariant()))
+        {
+            hash ^= b;
+            hash *= 16777619u;
+        }
+
+        return $"path-{hash:x8}";
+    }
+
+    private static bool IsPlaceholderSerial(string serial) =>
+        serial.Equals("AURA LED Controller", StringComparison.OrdinalIgnoreCase)
+        || serial.Equals("000000000000", StringComparison.Ordinal)
+        || serial.Equals("0", StringComparison.Ordinal);
+
     public static string SafeProductName(this HidDevice device) => Safe(device.GetProductName);
 
     public static string SafeManufacturer(this HidDevice device) => Safe(device.GetManufacturer);

@@ -1,16 +1,13 @@
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
 using Microsoft.Win32.SafeHandles;
-using RigForge.Infrastructure.CrossPlatform.Kingston;
 using RigForge.Infrastructure.CrossPlatform.Smbus;
 
 namespace RigForge.Infrastructure.Linux.Smbus;
 
 /// <summary>
 /// Linux <c>/dev/i2c-*</c> SMBus backend restricted to AMD PIIX4 and Intel i801 chipset adapters
-/// and guarded by <see cref="SmbusSafetyGuard"/>.
+/// and guarded by <see cref="SmbusAddressFirewall"/>.
 /// </summary>
 [SupportedOSPlatform("linux")]
 internal sealed class LinuxI2cSmbusControllerFactory : ISmbusControllerFactory
@@ -60,60 +57,8 @@ internal sealed class LinuxI2cSmbusControllerFactory : ISmbusControllerFactory
         return result;
     }
 
-    internal static IReadOnlyList<SmbiosMemoryStick> ParseSmbiosType17(ReadOnlySpan<byte> dmi)
-    {
-        var sticks = new List<SmbiosMemoryStick>();
-        var offset = 0;
-
-        while (offset + 4 <= dmi.Length)
-        {
-            var type = dmi[offset];
-            var formattedLength = dmi[offset + 1];
-            if (formattedLength < 4 || offset + formattedLength > dmi.Length)
-            {
-                break;
-            }
-
-            var stringsStart = offset + formattedLength;
-            var strings = ReadStructureStrings(dmi[stringsStart..], out var stringsBytes);
-            var nextOffset = stringsStart + stringsBytes;
-
-            if (type == 17 && formattedLength >= 0x1C)
-            {
-                var sizeRaw = (ushort)(dmi[offset + 0x0C] | (dmi[offset + 0x0D] << 8));
-                if (sizeRaw is > 0 and not 0xFFFF)
-                {
-                    var sizeMb = (sizeRaw & 0x8000) != 0 ? (sizeRaw & 0x7FFF) / 1024 : sizeRaw;
-                    var speed = (ushort)(dmi[offset + 0x15] | (dmi[offset + 0x16] << 8));
-                    var deviceLocator = GetDmiString(strings, dmi[offset + 0x10]);
-                    var bankLocator = GetDmiString(strings, dmi[offset + 0x11]);
-                    var manufacturer = GetDmiString(strings, dmi[offset + 0x17]);
-                    var serial = GetDmiString(strings, dmi[offset + 0x18]);
-                    var partNumber = GetDmiString(strings, dmi[offset + 0x1A]).Trim();
-
-                    if (partNumber.Length > 0)
-                    {
-                        sticks.Add(new SmbiosMemoryStick(
-                            bankLocator,
-                            deviceLocator,
-                            manufacturer,
-                            partNumber,
-                            serial,
-                            sizeMb,
-                            speed));
-                    }
-                }
-            }
-            else if (type == 127)
-            {
-                break;
-            }
-
-            offset = nextOffset;
-        }
-
-        return sticks;
-    }
+    internal static IReadOnlyList<SmbiosMemoryStick> ParseSmbiosType17(ReadOnlySpan<byte> dmi) =>
+        SmbiosType17Parser.Parse(dmi);
 
     private static List<(string BusId, string Name)> FindChipsetAdapters()
     {
@@ -152,43 +97,6 @@ internal sealed class LinuxI2cSmbusControllerFactory : ISmbusControllerFactory
 
         return adapters;
     }
-
-    private static List<string> ReadStructureStrings(ReadOnlySpan<byte> tail, out int consumedBytes)
-    {
-        var result = new List<string>();
-        var idx = 0;
-
-        if (tail.Length >= 2 && tail[0] == 0 && tail[1] == 0)
-        {
-            consumedBytes = 2;
-            return result;
-        }
-
-        while (idx < tail.Length)
-        {
-            var end = tail[idx..].IndexOf((byte)0);
-            if (end < 0)
-            {
-                consumedBytes = tail.Length;
-                return result;
-            }
-
-            result.Add(Encoding.ASCII.GetString(tail.Slice(idx, end)));
-            idx += end + 1;
-
-            if (idx < tail.Length && tail[idx] == 0)
-            {
-                idx++;
-                break;
-            }
-        }
-
-        consumedBytes = idx;
-        return result;
-    }
-
-    private static string GetDmiString(List<string> strings, byte oneBasedIndex) =>
-        oneBasedIndex > 0 && oneBasedIndex <= strings.Count ? strings[oneBasedIndex - 1] : string.Empty;
 }
 
 [SupportedOSPlatform("linux")]
@@ -229,9 +137,29 @@ internal sealed partial class LinuxI2cSmbusController : ISmbusController
         }
     }
 
+    public IDisposable AcquireBusLock()
+    {
+        _gate.Enter();
+        return new GateScope(_gate);
+    }
+
+    private sealed class GateScope(Lock gate) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                gate.Exit();
+            }
+        }
+    }
+
     public unsafe bool TryWriteByteData(byte address, byte register, byte value)
     {
-        SmbusSafetyGuard.ValidateWrite(address, register, value, SmbusSafetyGuard.HardMaxAllowedAddress);
+        SmbusAddressFirewall.ValidateAddress(address);
 
         lock (_gate)
         {
@@ -261,7 +189,7 @@ internal sealed partial class LinuxI2cSmbusController : ISmbusController
 
     public unsafe bool TryReadWordData(byte address, byte register, out ushort value)
     {
-        SmbusSafetyGuard.ValidateRead(address, register, SmbusSafetyGuard.HardMaxAllowedAddress);
+        SmbusAddressFirewall.ValidateAddress(address);
         value = 0;
 
         lock (_gate)

@@ -10,18 +10,25 @@ internal sealed class HidReportChannel : IDisposable
 {
     private const int DefaultTimeoutMs = 500;
 
-    private readonly HidStream _stream;
+    private readonly Stream _stream;
     private readonly byte[] _output;
     private readonly byte[] _input;
-    private readonly Lock _io = new();
-    private bool _disposed;
+    private readonly Lock _writeGate = new();
+    private readonly Lock _readGate = new();
+    private volatile bool _disposed;
 
     private HidReportChannel(HidDevice device, HidStream stream)
+        : this(stream, device.GetMaxOutputReportLength(), device.GetMaxInputReportLength())
     {
         Device = device;
+    }
+
+    internal HidReportChannel(Stream stream, int outputReportLength = 64, int inputReportLength = 64)
+    {
+        Device = null!;
         _stream = stream;
-        _output = new byte[Math.Max(device.GetMaxOutputReportLength(), 1)];
-        _input = new byte[Math.Max(device.GetMaxInputReportLength(), 1)];
+        _output = new byte[Math.Max(outputReportLength, 1)];
+        _input = new byte[Math.Max(inputReportLength, 1)];
     }
 
     public HidDevice Device { get; }
@@ -37,7 +44,7 @@ internal sealed class HidReportChannel : IDisposable
     /// <summary>Sends one output report, zero-padded to the device's report length.</summary>
     public void Write(ReadOnlySpan<byte> report)
     {
-        lock (_io)
+        lock (_writeGate)
         {
             WriteCore(report);
         }
@@ -46,16 +53,20 @@ internal sealed class HidReportChannel : IDisposable
     /// <summary>Sends a request and returns the first input report accepted by <paramref name="accept"/>, or null on timeout.</summary>
     public byte[]? Request(ReadOnlySpan<byte> request, Func<byte[], bool> accept, int timeoutMs = DefaultTimeoutMs)
     {
-        lock (_io)
+        lock (_readGate)
         {
-            WriteCore(request);
+            lock (_writeGate)
+            {
+                WriteCore(request);
+            }
+
             return ReadUntilCore(accept, timeoutMs);
         }
     }
 
     public byte[]? ReadUntil(Func<byte[], bool> accept, int timeoutMs = DefaultTimeoutMs)
     {
-        lock (_io)
+        lock (_readGate)
         {
             return ReadUntilCore(accept, timeoutMs);
         }
@@ -64,7 +75,7 @@ internal sealed class HidReportChannel : IDisposable
     /// <summary>Drops queued input reports; devices that stream status would otherwise hand out stale data.</summary>
     public void DrainInput()
     {
-        lock (_io)
+        lock (_readGate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _stream.ReadTimeout = 1;
@@ -87,15 +98,18 @@ internal sealed class HidReportChannel : IDisposable
 
     public void Dispose()
     {
-        lock (_io)
+        lock (_readGate)
         {
-            if (_disposed)
+            lock (_writeGate)
             {
-                return;
-            }
+                if (_disposed)
+                {
+                    return;
+                }
 
-            _disposed = true;
-            _stream.Dispose();
+                _disposed = true;
+                _stream.Dispose();
+            }
         }
     }
 
@@ -135,10 +149,14 @@ internal sealed class HidReportChannel : IDisposable
                 continue;
             }
 
-            var report = _input.AsSpan(0, count).ToArray();
-            if (accept(report))
+            if (count < _input.Length)
             {
-                return report;
+                _input.AsSpan(count).Clear();
+            }
+
+            if (accept(_input))
+            {
+                return _input.AsSpan(0, count).ToArray();
             }
         }
     }

@@ -45,6 +45,10 @@ internal sealed class LcdFrameRenderer : IDisposable
 
     public int Height { get; }
 
+    public ReadOnlyMemory<byte> LastFrame => _rgba;
+
+    public bool HasRenderedFrame { get; private set; }
+
     /// <summary>Renders a frame and returns it as RGBA8888 (buffer is reused by the next call).</summary>
     public ReadOnlyMemory<byte> Render(LcdSettings settings, TelemetrySnapshot telemetry, float[] history)
     {
@@ -81,6 +85,7 @@ internal sealed class LcdFrameRenderer : IDisposable
         _canvas.Flush();
 
         _bitmap.GetPixelSpan().CopyTo(_rgba);
+        HasRenderedFrame = true;
         return _rgba;
     }
 

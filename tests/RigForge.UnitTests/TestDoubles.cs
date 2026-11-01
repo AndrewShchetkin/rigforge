@@ -87,13 +87,21 @@ internal sealed class StaticProbe(params IHardwareDevice[] devices) : IDevicePro
 
 internal sealed class InMemoryProfileStore : IProfileStore
 {
-    public RigProfile? Saved { get; private set; }
+    public RigProfile? Saved { get; set; }
+
+    public int BackupCount { get; private set; }
 
     public Task<RigProfile?> LoadAsync(CancellationToken cancellationToken) => Task.FromResult(Saved);
 
     public Task SaveAsync(RigProfile profile, CancellationToken cancellationToken)
     {
         Saved = profile;
+        return Task.CompletedTask;
+    }
+
+    public Task BackupCorruptAsync(CancellationToken cancellationToken)
+    {
+        BackupCount++;
         return Task.CompletedTask;
     }
 }

@@ -8,4 +8,6 @@ public interface IProfileStore
     Task<RigProfile?> LoadAsync(CancellationToken cancellationToken);
 
     Task SaveAsync(RigProfile profile, CancellationToken cancellationToken);
+
+    Task BackupCorruptAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

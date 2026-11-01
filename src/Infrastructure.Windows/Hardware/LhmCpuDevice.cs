@@ -7,41 +7,61 @@ namespace RigForge.Infrastructure.Windows.Hardware;
 
 /// <summary>CPU temperatures (AMD Tctl/Tdie, CCD), package power and total load via LibreHardwareMonitor.</summary>
 [SupportedOSPlatform("windows")]
-internal sealed class LhmCpuDevice(LibreHardwareMonitorSession session, IHardware hardware) : ISensorProvider
+internal sealed class LhmCpuDevice : ISensorProvider
 {
     // Preferred "CPU temperature" sensors, best first: AMD Zen, Intel, generic fallbacks.
     private static readonly string[] PackageTemperatureNames = ["Core (Tctl/Tdie)", "CPU Package", "Tctl", "Tdie", "Core (Tctl)"];
 
+    private readonly LibreHardwareMonitorSession _session;
+    private readonly IHardware _hardware;
     private int _released;
 
-    public string Id { get; } = LibreHardwareMonitorSession.DeviceId(hardware);
+    public LhmCpuDevice(LibreHardwareMonitorSession session, IHardware hardware)
+    {
+        _session = session;
+        _hardware = hardware;
+        Id = LibreHardwareMonitorSession.DeviceId(hardware);
+        Properties = new Dictionary<string, string>
+        {
+            ["Source"] = "LibreHardwareMonitor",
+            ["Identifier"] = hardware.Identifier.ToString(),
+        };
 
-    public string Name => hardware.Name;
+        lock (session.Sync)
+        {
+            foreach (var sensor in hardware.Sensors)
+            {
+                sensor.ValuesTimeWindow = TimeSpan.Zero;
+            }
+        }
+    }
 
-    public string Vendor => hardware.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase) ? "AMD" : "Intel";
+    public string Id { get; }
+
+    public string Name => _hardware.Name;
+
+    public string Vendor => _hardware.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase) ? "AMD" : "Intel";
 
     public DeviceCapabilities Capabilities => DeviceCapabilities.Sensors;
 
-    public IReadOnlyDictionary<string, string> Properties { get; } = new Dictionary<string, string>
-    {
-        ["Source"] = "LibreHardwareMonitor",
-        ["Identifier"] = hardware.Identifier.ToString(),
-    };
+    public IReadOnlyDictionary<string, string> Properties { get; }
 
     public ValueTask<IReadOnlyList<SensorReading>> ReadSensorsAsync(CancellationToken cancellationToken)
     {
         var readings = new List<SensorReading>();
-        lock (session.Sync)
+        lock (_session.Sync)
         {
             ObjectDisposedException.ThrowIf(_released != 0, this);
-            hardware.Update();
+            _hardware.Update();
 
             var packageSensor = PackageTemperatureNames
-                .Select(name => hardware.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name == name && s.Value > 0f))
+                .Select(name => _hardware.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name == name && s.Value > 0f))
                 .FirstOrDefault(s => s is not null);
 
-            foreach (var sensor in hardware.Sensors)
+            foreach (var sensor in _hardware.Sensors)
             {
+                sensor.ValuesTimeWindow = TimeSpan.Zero;
+
                 if (sensor.Value is not { } value || !Include(sensor) || LibreHardwareMonitorSession.MapKind(sensor.SensorType) is not { } kind)
                 {
                     continue;
@@ -75,7 +95,7 @@ internal sealed class LhmCpuDevice(LibreHardwareMonitorSession session, IHardwar
     {
         if (Interlocked.Exchange(ref _released, 1) == 0)
         {
-            session.Release();
+            _session.Release();
         }
 
         return ValueTask.CompletedTask;

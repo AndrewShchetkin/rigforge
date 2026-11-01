@@ -28,6 +28,8 @@ internal sealed partial class KrakenLcdUploader(
 
     private readonly byte[] _payload = new byte[width * height * (useRgb565Stream ? 2 : 4)];
     private bool _primed;
+    private bool _bucketsInitialized;
+    private int _activeBucket = -1;
 
     public bool UsesRgb565Stream => useRgb565Stream;
 
@@ -61,6 +63,8 @@ internal sealed partial class KrakenLcdUploader(
     {
         SwitchBucket(0, mode: 0x02);
         _primed = false;
+        _bucketsInitialized = false;
+        _activeBucket = -1;
     }
 
     public void Dispose() => bulk.Dispose();
@@ -107,24 +111,20 @@ internal sealed partial class KrakenLcdUploader(
     {
         Command([0x36, 0x03]);
 
-        var buckets = new byte[BucketCount][];
-        for (var i = 0; i < BucketCount; i++)
+        var index = _activeBucket == 0 ? 1 : 0;
+        if (!_bucketsInitialized)
         {
-            buckets[i] = Command([0x30, 0x04, (byte)i]) ?? new byte[64];
+            DeleteAllBuckets();
+            _bucketsInitialized = true;
         }
-
-        var free = Array.FindIndex(buckets, b => b.Skip(15).All(x => x == 0));
-        var index = PrepareBucket(free == -1 ? 0 : free, bucketFilled: free == -1);
+        else if (_activeBucket >= 0 || _bucketsInitialized)
+        {
+            DeleteBucket(index);
+        }
 
         var header = BulkHeader(0x02, _payload.Length);
         var sizeKb = (int)Math.Ceiling((header.Length + _payload.Length) / 1024.0);
-        var memoryStart = BucketMemoryOffset(buckets, index, sizeKb);
-        if (memoryStart < 0)
-        {
-            DeleteAllBuckets();
-            index = 0;
-            memoryStart = 0;
-        }
+        var memoryStart = index * sizeKb;
 
         var setup = Command([0x32, 0x01, (byte)index, (byte)(index + 1), (byte)memoryStart, (byte)(memoryStart >> 8), (byte)sizeKb, (byte)(sizeKb >> 8), 0x01]);
         if (setup is null || setup[14] != 0x01)
@@ -141,34 +141,8 @@ internal sealed partial class KrakenLcdUploader(
         {
             throw new IOException($"The Kraken refused to display bucket {index}.");
         }
-    }
 
-    /// <summary>Port of liquidctl's _prepare_bucket: retry the next bucket when deletion fails, delete filled buckets twice.</summary>
-    private int PrepareBucket(int index, bool bucketFilled)
-    {
-        for (var attempt = 0; attempt < BucketCount * 2 && index < BucketCount; attempt++)
-        {
-            if (!DeleteBucket(index))
-            {
-                index++;
-                bucketFilled = true;
-                continue;
-            }
-
-            if (!bucketFilled)
-            {
-                return index;
-            }
-
-            bucketFilled = false;
-        }
-
-        if (index >= BucketCount)
-        {
-            throw new IOException("No Kraken screen bucket could be freed.");
-        }
-
-        return index;
+        _activeBucket = index;
     }
 
     /// <summary>Port of liquidctl's _get_bucket_memory_offset (sizes and offsets in KiB).</summary>

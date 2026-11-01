@@ -1,3 +1,4 @@
+using System.Buffers;
 using LibUsbDotNet;
 using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
@@ -97,14 +98,22 @@ internal sealed partial class LibUsbBulkTransportFactory(ILogger<LibUsbBulkTrans
 
         public void Write(ReadOnlySpan<byte> data)
         {
-            var buffer = data.ToArray();
-            lock (_gate)
+            var buffer = ArrayPool<byte>.Shared.Rent(data.Length);
+            try
             {
-                var error = writer.Write(buffer, 0, buffer.Length, WriteTimeoutMs, out var written);
-                if (error != Error.Success || written != buffer.Length)
+                data.CopyTo(buffer);
+                lock (_gate)
                 {
-                    throw new IOException($"USB bulk write failed: {error} ({written}/{buffer.Length} bytes).");
+                    var error = writer.Write(buffer, 0, data.Length, WriteTimeoutMs, out var written);
+                    if (error != Error.Success || written != data.Length)
+                    {
+                        throw new IOException($"USB bulk write failed: {error} ({written}/{data.Length} bytes).");
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
 

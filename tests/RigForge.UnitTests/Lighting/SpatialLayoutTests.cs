@@ -1,4 +1,5 @@
 using RigForge.Application.Effects;
+using RigForge.Application.Effects.Library;
 using RigForge.Application.Layout;
 using RigForge.Core.Models;
 
@@ -20,7 +21,7 @@ public sealed class SpatialLayoutTests
         var device = new FakeRgbDevice("dev", Strip("z", 2));
         var placement = new ZonePlacement { DeviceId = "dev", ZoneId = "z", X = 10, Y = 20, Width = 100, Height = 50 };
 
-        var plan = LedSamplePlan.Build(device, new Dictionary<(string, string), ZonePlacement> { [("dev", "z")] = placement });
+        var plan = LedSamplePlan.Build(device, new Dictionary<(string, string), ZonePlacement> { [("dev", "z")] = placement }, canvasWidth: 320, canvasHeight: 180);
 
         Approx.Equal(10f, plan.X[0]);
         Approx.Equal(45f, plan.Y[0]);
@@ -35,7 +36,7 @@ public sealed class SpatialLayoutTests
         var device = new FakeRgbDevice("dev", zone);
         var placement = new ZonePlacement { DeviceId = "dev", ZoneId = "z", X = 10, Y = 20, Width = 100, Height = 50, Rotation = 90 };
 
-        var plan = LedSamplePlan.Build(device, new Dictionary<(string, string), ZonePlacement> { [("dev", "z")] = placement });
+        var plan = LedSamplePlan.Build(device, new Dictionary<(string, string), ZonePlacement> { [("dev", "z")] = placement }, canvasWidth: 320, canvasHeight: 180);
 
         Approx.Equal(10f, plan.X[0]);
         Approx.Equal(120f, plan.Y[0]);
@@ -52,7 +53,7 @@ public sealed class SpatialLayoutTests
         };
         var white = Enumerable.Repeat((byte)255, 8 * 8 * 4).ToArray();
 
-        var plan = LedSamplePlan.Build(device, placements);
+        var plan = LedSamplePlan.Build(device, placements, canvasWidth: 8, canvasHeight: 8);
         plan.Sample(white, 8, 8, brightness: 1f);
 
         Assert.Equal(RgbColor.White, plan.Colors[0]);
@@ -68,6 +69,68 @@ public sealed class SpatialLayoutTests
         var color = LedSamplePlan.SampleBilinear(pixels, width: 2, height: 1, x: 1f, y: 0.5f);
 
         Assert.InRange(color.R, 127, 129);
+    }
+
+    [Fact]
+    public void Precomputed_taps_match_bilinear_sampling()
+    {
+        var zone = Strip("z", 1) with { Leds = [new LedPosition(0.5f, 0.5f)] };
+        var device = new FakeRgbDevice("dev", zone);
+        var placements = new Dictionary<(string, string), ZonePlacement>
+        {
+            [("dev", "z")] = new() { DeviceId = "dev", ZoneId = "z", X = 0, Y = 0, Width = 2, Height = 1, Enabled = true },
+        };
+        byte[] pixels = [0, 0, 0, 255, 255, 128, 64, 255];
+
+        var plan = LedSamplePlan.Build(device, placements, canvasWidth: 2, canvasHeight: 1);
+        plan.Sample(pixels, 2, 1, brightness: 1f);
+
+        Assert.InRange(plan.Colors[0].R, 127, 129);
+        Assert.InRange(plan.Colors[0].G, 63, 65);
+        Assert.InRange(plan.Colors[0].B, 31, 33);
+    }
+
+    [Fact]
+    public void Precomputed_tap_weights_never_overflow_pure_white_at_rounding_boundary()
+    {
+        var zone = Strip("z", 1) with { Leds = [new LedPosition(0f, 0f)] };
+        var device = new FakeRgbDevice("dev", zone);
+        var placements = new Dictionary<(string, string), ZonePlacement>
+        {
+            [("dev", "z")] = new()
+            {
+                DeviceId = "dev",
+                ZoneId = "z",
+                X = 1.0f,
+                Y = 0.5f + 1f / 256f,
+                Width = 2,
+                Height = 2,
+                Enabled = true,
+            },
+        };
+        var white = Enumerable.Repeat((byte)255, 4 * 4 * 4).ToArray();
+
+        var plan = LedSamplePlan.Build(device, placements, canvasWidth: 4, canvasHeight: 4);
+        plan.Sample(white, 4, 4, brightness: 1f);
+
+        Assert.Equal(256, plan.Taps[0].W00 + plan.Taps[0].W10 + plan.Taps[0].W01 + plan.Taps[0].W11);
+        Assert.Equal(RgbColor.White, plan.Colors[0]);
+    }
+
+    [Fact]
+    public void Pure_csharp_effects_render_into_rgba_span_without_skia()
+    {
+        var rgba = new byte[16 * 8 * 4];
+        var settings = new EffectSettings { Colors = ["#FF0040", "#00FF80"], Speed = 1f, Angle = 45f };
+        var ctx = new EffectFrameContext(16, 8, Time: 0.5, settings, [new RgbColor(255, 0, 64), new RgbColor(0, 255, 128)], TelemetrySnapshot.Empty);
+
+        using var solid = new SolidColorEffect();
+        solid.Render(rgba, in ctx);
+        Assert.Equal([255, 0, 64, 255], rgba[..4]);
+
+        using var wave = new RainbowWaveEffect();
+        wave.Render(rgba, in ctx);
+        Assert.Equal(255, rgba[3]);
     }
 
     [Fact]

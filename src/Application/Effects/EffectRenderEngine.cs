@@ -7,7 +7,6 @@ using RigForge.Application.Profiles;
 using RigForge.Application.Telemetry;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
-using SkiaSharp;
 
 namespace RigForge.Application.Effects;
 
@@ -15,7 +14,7 @@ namespace RigForge.Application.Effects;
 public sealed record ZonePreview(string DeviceId, string ZoneId, byte[] Rgb);
 
 /// <summary>
-/// The lighting loop: renders the active effect onto the virtual canvas with SkiaSharp, samples it at every
+/// The lighting loop: renders the active effect onto the virtual RGBA canvas, samples it at every
 /// LED position and hands the frames to per-device dispatchers. Runs on a dedicated thread paced by
 /// <see cref="IPrecisionTimer"/> so 60 FPS is reachable on Windows as well.
 /// </summary>
@@ -31,14 +30,24 @@ public sealed partial class EffectRenderEngine(
     private static readonly TimeSpan IdleDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly Dictionary<string, RgbFrameDispatcher> _dispatchers = new(StringComparer.Ordinal);
+    private readonly ManualResetEventSlim _wakeSignal = new(false);
     private volatile IReadOnlyList<ZonePreview> _latestPreview = [];
     private volatile bool _previewRequested;
+    private volatile bool _wakeOnTelemetry;
 
     /// <summary>Set by the host while at least one UI client watches the LED preview.</summary>
     public bool PreviewRequested
     {
         get => _previewRequested;
-        set => _previewRequested = value;
+        set
+        {
+            var previous = _previewRequested;
+            _previewRequested = value;
+            if (!previous && value)
+            {
+                _wakeSignal.Set();
+            }
+        }
     }
 
     public IReadOnlyList<ZonePreview> LatestPreview => _latestPreview;
@@ -80,33 +89,93 @@ public sealed partial class EffectRenderEngine(
         var clock = Stopwatch.StartNew();
         var frame = new FrameState();
 
+        void OnProfileChanged(RigProfile _) => _wakeSignal.Set();
+        void OnDevicesChanged() => _wakeSignal.Set();
+        void OnTelemetryUpdated(TelemetrySnapshot _)
+        {
+            if (_wakeOnTelemetry)
+            {
+                _wakeSignal.Set();
+            }
+        }
+
+        profiles.Changed += OnProfileChanged;
+        devices.DevicesChanged += OnDevicesChanged;
+        telemetry.Updated += OnTelemetryUpdated;
+
         try
         {
             var fpsWindowStart = clock.Elapsed;
             var framesInWindow = 0;
             var lastPreview = TimeSpan.Zero;
             var previewInterval = TimeSpan.FromSeconds(1.0 / Math.Max(1, settingsOptions.PreviewFramesPerSecond));
+            var staticRendered = false;
+            var staticPreviewBuilt = false;
+            DateTimeOffset? lastStaticTelemetryTimestamp = null;
 
             while (!cancellationToken.IsCancellationRequested)
             {
+                _wakeSignal.Reset();
                 var frameStart = clock.Elapsed;
                 var profile = profiles.Current;
+                var currentDevices = devices.Devices;
+                var previewRequested = _previewRequested;
+                var snapshot = telemetry.Latest;
 
-                frame.SyncEffect(profile.Effect, registry, frameStart);
-                if (frame.SyncLayout(profile, devices.Devices))
+                var effectChanged = frame.SyncEffect(profile.Effect, registry, frameStart);
+                _wakeOnTelemetry = frame.Effect is { Descriptor: { UsesSensor: true, IsAnimated: false } };
+                var layoutChanged = frame.SyncLayout(profile, currentDevices);
+                if (layoutChanged)
                 {
                     SyncDispatchers(frame.Plans, settingsOptions.KeepAliveInterval);
                 }
 
-                if (frame.Plans.Count == 0 && !_previewRequested)
+                if (frame.Plans.Count == 0 && !previewRequested)
                 {
-                    precisionTimer.Sleep(IdleDelay);
+                    staticRendered = false;
+                    staticPreviewBuilt = false;
+                    lastStaticTelemetryTimestamp = null;
+                    FramesPerSecond = 0;
+                    _wakeSignal.Wait(IdleDelay, cancellationToken);
                     continue;
                 }
 
-                RenderFrame(frame, profile.Effect, (frameStart - frame.EffectStartedAt).TotalSeconds);
+                var descriptor = frame.Effect!.Descriptor;
+                if (!descriptor.IsAnimated)
+                {
+                    var telemetryChanged = descriptor.UsesSensor && snapshot.Timestamp != lastStaticTelemetryTimestamp;
+                    var stateChanged = !staticRendered || effectChanged || layoutChanged || telemetryChanged;
+                    if (stateChanged || (previewRequested && !staticPreviewBuilt))
+                    {
+                        RenderFrame(frame, profile.Effect, (frameStart - frame.EffectStartedAt).TotalSeconds, snapshot);
+                        staticRendered = true;
+                        lastStaticTelemetryTimestamp = descriptor.UsesSensor ? snapshot.Timestamp : null;
+                        if (previewRequested)
+                        {
+                            _latestPreview = BuildPreview(frame.Plans);
+                            lastPreview = frameStart;
+                            staticPreviewBuilt = true;
+                        }
+                        else
+                        {
+                            staticPreviewBuilt = false;
+                        }
+                    }
 
-                if (_previewRequested && frameStart - lastPreview >= previewInterval)
+                    FramesPerSecond = 0;
+                    framesInWindow = 0;
+                    fpsWindowStart = clock.Elapsed;
+                    _wakeSignal.Wait(cancellationToken);
+                    continue;
+                }
+
+                staticRendered = false;
+                staticPreviewBuilt = false;
+                lastStaticTelemetryTimestamp = null;
+
+                RenderFrame(frame, profile.Effect, (frameStart - frame.EffectStartedAt).TotalSeconds, snapshot);
+
+                if (previewRequested && frameStart - lastPreview >= previewInterval)
                 {
                     _latestPreview = BuildPreview(frame.Plans);
                     lastPreview = frameStart;
@@ -120,9 +189,7 @@ public sealed partial class EffectRenderEngine(
                     framesInWindow = 0;
                 }
 
-                var targetFps = frame.Effect!.Descriptor.IsAnimated
-                    ? Math.Clamp(profile.Effect.TargetFps, 1, settingsOptions.MaxFramesPerSecond)
-                    : settingsOptions.StaticEffectFramesPerSecond;
+                var targetFps = Math.Clamp(profile.Effect.TargetFps, 1, settingsOptions.MaxFramesPerSecond);
                 var remaining = TimeSpan.FromSeconds(1.0 / targetFps) - (clock.Elapsed - frameStart);
                 if (remaining > TimeSpan.Zero)
                 {
@@ -132,6 +199,9 @@ public sealed partial class EffectRenderEngine(
         }
         finally
         {
+            profiles.Changed -= OnProfileChanged;
+            devices.DevicesChanged -= OnDevicesChanged;
+            telemetry.Updated -= OnTelemetryUpdated;
             frame.Dispose();
             foreach (var dispatcher in _dispatchers.Values)
             {
@@ -142,13 +212,14 @@ public sealed partial class EffectRenderEngine(
         }
     }
 
-    private void RenderFrame(FrameState frame, EffectSettings settings, double effectTime)
+    private void RenderFrame(FrameState frame, EffectSettings settings, double effectTime, TelemetrySnapshot snapshot)
     {
-        var context = new EffectFrameContext(frame.Width, frame.Height, effectTime, settings, frame.Colors, telemetry.Latest);
+        var context = new EffectFrameContext(frame.Width, frame.Height, effectTime, settings, frame.Colors, snapshot);
+        var pixels = frame.Pixels.AsSpan();
         try
         {
-            frame.Canvas!.Clear(SKColors.Black);
-            frame.Effect!.Render(frame.Canvas, context);
+            CanvasBuffer.Fill(pixels, RgbColor.Black);
+            frame.Effect!.Render(pixels, in context);
             frame.EffectFailed = false;
         }
         catch (Exception ex)
@@ -160,12 +231,9 @@ public sealed partial class EffectRenderEngine(
                 frame.EffectFailed = true;
             }
 
-            frame.Canvas!.Clear(SKColors.Black);
+            CanvasBuffer.Fill(pixels, RgbColor.Black);
         }
 
-        frame.Canvas.Flush();
-
-        var pixels = frame.Bitmap!.GetPixelSpan();
         var brightness = Math.Clamp(settings.Brightness, 0f, 1f);
         foreach (var plan in frame.Plans)
         {
@@ -224,7 +292,7 @@ public sealed partial class EffectRenderEngine(
     [LoggerMessage(Level = LogLevel.Error, Message = "Effect {EffectId} threw while rendering; showing black")]
     private partial void LogEffectFailed(Exception exception, string effectId);
 
-    /// <summary>Render-thread-only state: active effect, canvas surface and sample plans.</summary>
+    /// <summary>Render-thread-only state: active effect, canvas buffer and sample plans.</summary>
     private sealed class FrameState : IDisposable
     {
         private EffectSettings? _settings;
@@ -235,30 +303,28 @@ public sealed partial class EffectRenderEngine(
 
         public TimeSpan EffectStartedAt { get; private set; }
 
-        public IReadOnlyList<SKColor> Colors { get; private set; } = [];
+        public IReadOnlyList<RgbColor> Colors { get; private set; } = [];
 
         public bool EffectFailed { get; set; }
 
-        public SKBitmap? Bitmap { get; private set; }
+        public byte[] Pixels { get; private set; } = [];
 
-        public SKCanvas? Canvas { get; private set; }
+        public int Width { get; private set; }
 
-        public int Width => Bitmap?.Width ?? 0;
-
-        public int Height => Bitmap?.Height ?? 0;
+        public int Height { get; private set; }
 
         public List<LedSamplePlan> Plans { get; private set; } = [];
 
-        public void SyncEffect(EffectSettings settings, EffectRegistry registry, TimeSpan now)
+        public bool SyncEffect(EffectSettings settings, EffectRegistry registry, TimeSpan now)
         {
             if (ReferenceEquals(settings, _settings))
             {
-                return;
+                return false;
             }
 
             _settings = settings;
             Colors = settings.Colors
-                .Select(c => RgbColor.TryParse(c, out var color) ? new SKColor(color.R, color.G, color.B) : SKColors.White)
+                .Select(c => RgbColor.TryParse(c, out var color) ? color : RgbColor.White)
                 .ToArray();
 
             if (Effect is null || !string.Equals(Effect.Descriptor.Id, settings.EffectId, StringComparison.OrdinalIgnoreCase))
@@ -268,6 +334,8 @@ public sealed partial class EffectRenderEngine(
                 EffectStartedAt = now;
                 EffectFailed = false;
             }
+
+            return true;
         }
 
         /// <summary>Returns true when the plans were rebuilt.</summary>
@@ -289,14 +357,17 @@ public sealed partial class EffectRenderEngine(
                 .GroupBy(p => (p.DeviceId, p.ZoneId))
                 .ToDictionary(g => g.Key, g => g.First());
 
-            Plans = rgbDevices.Select(d => LedSamplePlan.Build(d, placements)).Where(p => p.Colors.Length > 0).ToList();
+            Plans = rgbDevices
+                .Select(d => LedSamplePlan.Build(d, placements, canvas.Width, canvas.Height))
+                .Where(p => p.Colors.Length > 0)
+                .ToList();
 
-            if (Bitmap is null || Bitmap.Width != canvas.Width || Bitmap.Height != canvas.Height)
+            var requiredBytes = canvas.Width * canvas.Height * 4;
+            if (Pixels.Length != requiredBytes || Width != canvas.Width || Height != canvas.Height)
             {
-                Canvas?.Dispose();
-                Bitmap?.Dispose();
-                Bitmap = new SKBitmap(new SKImageInfo(canvas.Width, canvas.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
-                Canvas = new SKCanvas(Bitmap);
+                Width = canvas.Width;
+                Height = canvas.Height;
+                Pixels = new byte[requiredBytes];
             }
 
             return true;
@@ -305,8 +376,6 @@ public sealed partial class EffectRenderEngine(
         public void Dispose()
         {
             Effect?.Dispose();
-            Canvas?.Dispose();
-            Bitmap?.Dispose();
         }
     }
 }

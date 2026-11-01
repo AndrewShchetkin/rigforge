@@ -132,6 +132,7 @@ internal sealed class KingstonFuryDramDevice : IRgbDevice
                 SendPreambleLocked();
             }
 
+            using var busLock = _bus.AcquireBusLock();
             SendBeginTransactionLocked();
             try
             {
@@ -178,6 +179,7 @@ internal sealed class KingstonFuryDramDevice : IRgbDevice
 
     private void SendPreambleLocked()
     {
+        using var busLock = _bus.AcquireBusLock();
         SendBeginTransactionLocked();
         try
         {

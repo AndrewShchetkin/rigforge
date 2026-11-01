@@ -7,20 +7,21 @@ namespace RigForge.Infrastructure.CrossPlatform.Nzxt;
 
 /// <summary>
 /// HUE 2 generation controllers: RGB &amp; Fan Controller, RGB Controller (bundled with Kraken RGB / H-series cases),
-/// Smart Device V2, HUE 2. LED channels are driven in direct mode; LED counts come from the accessories the
-/// controller detects, so zones are not resizable.
+/// Smart Device V2, HUE 2. LED channels are driven in direct mode; LED counts default to the accessories the
+/// controller detects and can be resized by the user.
 /// </summary>
 internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvider
 {
     private readonly HidReportChannel _hid;
     private readonly int _fallbackDuty;
     private readonly bool _dryRun;
-    private readonly Lock _transaction = new();
+    private readonly Lock _writeLock = new();
+    private readonly Lock _readLock = new();
     private readonly int[] _zoneChannels;
     private readonly Dictionary<string, string> _properties;
-    private bool _disposed;
+    private volatile bool _disposed;
 
-    private NzxtHue2Device(
+    internal NzxtHue2Device(
         HidReportChannel hid,
         Hue2Model model,
         string id,
@@ -39,7 +40,10 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
         var zoneChannels = new List<int>();
         for (var channel = 0; channel < accessories.Count; channel++)
         {
-            var known = accessories[channel].Select(a => NzxtCatalog.Accessories.GetValueOrDefault(a)).OfType<Hue2Accessory>().ToList();
+            var known = accessories[channel]
+                .Where(a => a != 0)
+                .Select(a => NzxtCatalog.Accessories.GetValueOrDefault(a) ?? new Hue2Accessory($"Accessory 0x{a:X2}", 12, LedTopology.Linear))
+                .ToList();
             if (known.Count == 0)
             {
                 continue;
@@ -53,6 +57,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
                 Name = $"Channel {channel + 1}: {string.Join(" + ", known.Select(a => a.Name))}",
                 Topology = segments.Count == 1 ? segments[0].Topology : LedTopology.Composite,
                 Leds = leds,
+                IsResizable = true,
                 MaxLedCount = NzxtProtocol.MaxLedsPerChannel,
             });
             zoneChannels.Add(channel);
@@ -69,7 +74,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
         {
             ["Firmware"] = firmware,
             ["ProductId"] = $"0x{model.ProductId:X4}",
-            ["UsbPath"] = hid.Device.DevicePath,
+            ["UsbPath"] = hid.Device?.DevicePath ?? string.Empty,
             ["Accessories"] = string.Join("; ", accessories.Select((a, i) => $"ch{i + 1}: {(a.Count == 0 ? "none" : string.Join(", ", a.Select(x => NzxtCatalog.Accessories.TryGetValue(x, out var acc) ? acc.Name : $"0x{x:X2}")))}")),
         };
     }
@@ -86,7 +91,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
 
     public IReadOnlyDictionary<string, string> Properties => _properties;
 
-    public IReadOnlyList<RgbZone> Zones { get; }
+    public IReadOnlyList<RgbZone> Zones { get; private set; }
 
     public int MaxFramesPerSecond => 30;
 
@@ -130,7 +135,29 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
         }
     }
 
-    public bool TryResizeZone(string zoneId, int ledCount) => false;
+    public bool TryResizeZone(string zoneId, int ledCount)
+    {
+        var clamped = Math.Clamp(ledCount, 1, NzxtProtocol.MaxLedsPerChannel);
+        lock (_writeLock)
+        {
+            var zones = Zones.ToArray();
+            var index = Array.FindIndex(zones, z => z.Id == zoneId);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            var zone = zones[index];
+            zones[index] = zone with
+            {
+                Leds = zone.Topology == LedTopology.Ring
+                    ? LedLayouts.Ring(clamped)
+                    : LedLayouts.Linear(clamped),
+            };
+            Zones = zones;
+            return true;
+        }
+    }
 
     public ValueTask UpdateLedsAsync(ReadOnlyMemory<RgbColor> colors, CancellationToken cancellationToken)
     {
@@ -139,7 +166,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
             return ValueTask.CompletedTask;
         }
 
-        lock (_transaction)
+        lock (_writeLock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             var offset = 0;
@@ -166,7 +193,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
         }
 
         IReadOnlyList<SmartDeviceFanStatus> fans;
-        lock (_transaction)
+        lock (_readLock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -206,12 +233,15 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
 
     public ValueTask DisposeAsync()
     {
-        lock (_transaction)
+        lock (_readLock)
         {
-            if (!_disposed)
+            lock (_writeLock)
             {
-                _disposed = true;
-                _hid.Dispose();
+                if (!_disposed)
+                {
+                    _disposed = true;
+                    _hid.Dispose();
+                }
             }
         }
 
@@ -225,7 +255,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
             return;
         }
 
-        lock (_transaction)
+        lock (_writeLock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _hid.Write(NzxtProtocol.SmartDeviceFixedDuty(channel, duty));

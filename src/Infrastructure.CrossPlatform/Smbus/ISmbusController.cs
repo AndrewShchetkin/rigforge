@@ -22,13 +22,15 @@ public sealed record SmbiosMemoryStick(
 
 /// <summary>
 /// Low-level SMBus controller port restricted to byte-data writes and word-data reads.
-/// Implementations must enforce <see cref="Kingston.SmbusSafetyGuard"/> before issuing bus transactions.
+/// Implementations must enforce <see cref="SmbusAddressFirewall"/> before issuing bus transactions.
 /// </summary>
 public interface ISmbusController : IDisposable
 {
     string BusName { get; }
 
     string Location { get; }
+
+    IDisposable AcquireBusLock();
 
     bool TryWriteByteData(byte address, byte register, byte value);
 

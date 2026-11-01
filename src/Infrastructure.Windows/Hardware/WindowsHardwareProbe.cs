@@ -16,6 +16,13 @@ internal sealed partial class WindowsHardwareProbe(
 {
     public string Name => "Windows sensors (Win32 + LibreHardwareMonitor)";
 
+    public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(
+        IReadOnlyList<IHardwareDevice> existingDevices,
+        CancellationToken cancellationToken) =>
+        existingDevices.Count > 0
+            ? Task.FromResult(existingDevices)
+            : ProbeAsync(cancellationToken);
+
     public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(CancellationToken cancellationToken)
     {
         var devices = new List<IHardwareDevice> { new WindowsSystemDevice() };

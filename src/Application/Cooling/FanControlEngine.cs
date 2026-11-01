@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -24,26 +25,53 @@ public sealed record FanChannelStatus(
 /// and writes the duty to the controller. Channels whose curve disappears, and all channels on shutdown,
 /// are handed back to firmware/BIOS control.
 /// </summary>
-public sealed partial class FanControlEngine(
-    DeviceManager devices,
-    ProfileService profiles,
-    TelemetryService telemetry,
-    IOptions<CoolingOptions> options,
-    TimeProvider timeProvider,
-    ILogger<FanControlEngine> logger)
+public sealed partial class FanControlEngine : IDisposable
 {
     private static readonly TimeSpan RestoreTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly Dictionary<string, ChannelRuntime> _channels = new(StringComparer.Ordinal);
+    private readonly DeviceManager _devices;
+    private readonly ProfileService _profiles;
+    private readonly TelemetryService _telemetry;
+    private readonly IOptions<CoolingOptions> _options;
+    private readonly TimeProvider _timeProvider;
+    private readonly ILogger<FanControlEngine> _logger;
+    private readonly ConcurrentDictionary<string, ChannelRuntime> _channels = new(StringComparer.Ordinal);
     private volatile IReadOnlyList<FanChannelStatus> _status = [];
+
+    public FanControlEngine(
+        DeviceManager devices,
+        ProfileService profiles,
+        TelemetryService telemetry,
+        IOptions<CoolingOptions> options,
+        TimeProvider timeProvider,
+        ILogger<FanControlEngine> logger)
+    {
+        _devices = devices;
+        _profiles = profiles;
+        _telemetry = telemetry;
+        _options = options;
+        _timeProvider = timeProvider;
+        _logger = logger;
+        _devices.DevicesChanged += InvalidateAppliedDuties;
+    }
 
     public event Action<IReadOnlyList<FanChannelStatus>>? StatusUpdated;
 
     public IReadOnlyList<FanChannelStatus> Status => _status;
 
+    public void Dispose() => _devices.DevicesChanged -= InvalidateAppliedDuties;
+
+    public void InvalidateAppliedDuties()
+    {
+        foreach (var runtime in _channels.Values)
+        {
+            runtime.LastSentDuty = null;
+        }
+    }
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(options.Value.Interval, timeProvider);
+        using var timer = new PeriodicTimer(_options.Value.Interval, _timeProvider);
         try
         {
             do
@@ -60,10 +88,10 @@ public sealed partial class FanControlEngine(
 
     public async Task TickAsync(CancellationToken cancellationToken)
     {
-        var settings = options.Value;
-        var now = timeProvider.GetUtcNow();
-        var snapshot = telemetry.Latest;
-        var controllers = devices.FanControllers.ToDictionary(c => c.Id, StringComparer.Ordinal);
+        var settings = _options.Value;
+        var now = _timeProvider.GetUtcNow();
+        var snapshot = _telemetry.Latest;
+        var controllers = _devices.FanControllers.ToDictionary(c => c.Id, StringComparer.Ordinal);
 
         var critical = snapshot.TryResolve(TelemetrySnapshot.RoleSelector(SensorRole.LiquidTemperature), out var liquid)
             && now - liquid.Timestamp <= settings.SensorStaleAfter
@@ -72,7 +100,7 @@ public sealed partial class FanControlEngine(
         var active = new HashSet<string>(StringComparer.Ordinal);
         var status = new List<FanChannelStatus>();
 
-        foreach (var curve in profiles.Current.FanCurves)
+        foreach (var curve in _profiles.Current.FanCurves)
         {
             if (!curve.Enabled)
             {
@@ -87,11 +115,7 @@ public sealed partial class FanControlEngine(
                 continue;
             }
 
-            if (!_channels.TryGetValue(curve.Id, out var runtime))
-            {
-                runtime = new ChannelRuntime(curve.DeviceId, curve.ChannelId);
-                _channels[curve.Id] = runtime;
-            }
+            var runtime = _channels.GetOrAdd(curve.Id, _ => new ChannelRuntime(curve.DeviceId, curve.ChannelId));
 
             var temperature = ResolveTemperature(curve, snapshot, now, settings.SensorStaleAfter);
             var output = runtime.Regulator.Update(curve, temperature, settings.FailsafeDutyPercent, critical, now);
@@ -136,9 +160,10 @@ public sealed partial class FanControlEngine(
 
         foreach (var removed in _channels.Keys.Where(id => !active.Contains(id)).ToList())
         {
-            var runtime = _channels[removed];
-            _channels.Remove(removed);
-            await RestoreAsync(removed, runtime, controllers.GetValueOrDefault(runtime.DeviceId), cancellationToken);
+            if (_channels.TryRemove(removed, out var runtime))
+            {
+                await RestoreAsync(removed, runtime, controllers.GetValueOrDefault(runtime.DeviceId), cancellationToken);
+            }
         }
 
         _status = status;
@@ -164,7 +189,7 @@ public sealed partial class FanControlEngine(
 
     private async Task RestoreAllAsync()
     {
-        var controllers = devices.FanControllers.ToDictionary(c => c.Id, StringComparer.Ordinal);
+        var controllers = _devices.FanControllers.ToDictionary(c => c.Id, StringComparer.Ordinal);
         foreach (var (curveId, runtime) in _channels)
         {
             using var timeout = new CancellationTokenSource(RestoreTimeout);
@@ -194,13 +219,19 @@ public sealed partial class FanControlEngine(
 
     private sealed class ChannelRuntime(string deviceId, string channelId)
     {
+        private int _lastSentDuty = -1;
+
         public string DeviceId { get; } = deviceId;
 
         public string ChannelId { get; } = channelId;
 
         public FanChannelRegulator Regulator { get; } = new();
 
-        public int? LastSentDuty { get; set; }
+        public int? LastSentDuty
+        {
+            get => Volatile.Read(ref _lastSentDuty) is >= 0 and var duty ? duty : null;
+            set => Volatile.Write(ref _lastSentDuty, value ?? -1);
+        }
 
         public DateTimeOffset LastSentAt { get; set; }
 
