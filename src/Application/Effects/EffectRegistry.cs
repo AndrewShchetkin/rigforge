@@ -1,5 +1,6 @@
 using RigForge.Application.Effects.Library;
 using RigForge.Core.Interfaces;
+using RigForge.Core.Models;
 
 namespace RigForge.Application.Effects;
 
@@ -27,6 +28,24 @@ public sealed class EffectRegistry
     public IReadOnlyList<EffectDescriptor> Descriptors => _effects.Values.Select(e => e.Descriptor).ToArray();
 
     public bool Contains(string effectId) => _effects.ContainsKey(effectId);
+
+    public bool TryGetDescriptor(string effectId, out EffectDescriptor descriptor)
+    {
+        if (_effects.TryGetValue(effectId, out var effect))
+        {
+            descriptor = effect.Descriptor;
+            return true;
+        }
+
+        descriptor = _effects[FallbackEffectId].Descriptor;
+        return false;
+    }
+
+    /// <summary>Returns settings with every schema parameter of the effect filled in from its default.</summary>
+    public EffectSettings FillDefaults(EffectSettings settings) =>
+        TryGetDescriptor(settings.EffectId, out var descriptor)
+            ? EffectParameterValues.FillDefaults(settings, descriptor)
+            : settings;
 
     public IEffect Create(string effectId) =>
         (_effects.TryGetValue(effectId, out var effect) ? effect : _effects[FallbackEffectId]).Create();

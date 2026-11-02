@@ -214,12 +214,42 @@ public sealed partial class EffectRenderEngine(
 
     private void RenderFrame(FrameState frame, EffectSettings settings, double effectTime, TelemetrySnapshot snapshot)
     {
-        var context = new EffectFrameContext(frame.Width, frame.Height, effectTime, settings, frame.Colors, snapshot);
-        var pixels = frame.Pixels.AsSpan();
+        var context = new EffectFrameContext(
+            frame.Width, frame.Height, effectTime, settings, frame.Colors, snapshot,
+            frame.Speed, frame.Angle, frame.SensorSelector, frame.TemperatureLow, frame.TemperatureHigh);
+        var brightness = Math.Clamp(settings.Brightness, 0f, 1f);
         try
         {
-            CanvasBuffer.Fill(pixels, RgbColor.Black);
-            frame.Effect!.Render(pixels, in context);
+            // Direct LED Sampling: procedural effects compute colors only at real LED points and the
+            // 320x180 canvas is neither filled nor rasterized — also while the UI preview is open,
+            // because the preview reads plan.Colors just like the device dispatchers do.
+            var sampledDirectly = false;
+            if (frame.Plans.Count > 0
+                && frame.Effect!.TrySamplePoints(frame.Plans[0].Points, frame.Plans[0].Colors, in context))
+            {
+                sampledDirectly = true;
+                for (var i = 1; i < frame.Plans.Count; i++)
+                {
+                    frame.Effect.TrySamplePoints(frame.Plans[i].Points, frame.Plans[i].Colors, in context);
+                }
+
+                foreach (var plan in frame.Plans)
+                {
+                    plan.ApplyDirectBrightness(brightness);
+                }
+            }
+
+            if (!sampledDirectly)
+            {
+                var pixels = frame.Pixels.AsSpan();
+                CanvasBuffer.Fill(pixels, RgbColor.Black);
+                frame.Effect!.Render(pixels, in context);
+                foreach (var plan in frame.Plans)
+                {
+                    plan.Sample(pixels, frame.Width, frame.Height, brightness);
+                }
+            }
+
             frame.EffectFailed = false;
         }
         catch (Exception ex)
@@ -231,13 +261,14 @@ public sealed partial class EffectRenderEngine(
                 frame.EffectFailed = true;
             }
 
-            CanvasBuffer.Fill(pixels, RgbColor.Black);
+            foreach (var plan in frame.Plans)
+            {
+                Array.Fill(plan.Colors, RgbColor.Black);
+            }
         }
 
-        var brightness = Math.Clamp(settings.Brightness, 0f, 1f);
         foreach (var plan in frame.Plans)
         {
-            plan.Sample(pixels, frame.Width, frame.Height, brightness);
             if (_dispatchers.TryGetValue(plan.Device.Id, out var dispatcher))
             {
                 dispatcher.Post(plan.Colors);
@@ -305,6 +336,16 @@ public sealed partial class EffectRenderEngine(
 
         public IReadOnlyList<RgbColor> Colors { get; private set; } = [];
 
+        public float Speed { get; private set; } = 1f;
+
+        public float Angle { get; private set; }
+
+        public string? SensorSelector { get; private set; }
+
+        public float TemperatureLow { get; private set; } = 35f;
+
+        public float TemperatureHigh { get; private set; } = 80f;
+
         public bool EffectFailed { get; set; }
 
         public byte[] Pixels { get; private set; } = [];
@@ -323,9 +364,6 @@ public sealed partial class EffectRenderEngine(
             }
 
             _settings = settings;
-            Colors = settings.Colors
-                .Select(c => RgbColor.TryParse(c, out var color) ? color : RgbColor.White)
-                .ToArray();
 
             if (Effect is null || !string.Equals(Effect.Descriptor.Id, settings.EffectId, StringComparison.OrdinalIgnoreCase))
             {
@@ -334,6 +372,15 @@ public sealed partial class EffectRenderEngine(
                 EffectStartedAt = now;
                 EffectFailed = false;
             }
+
+            // Parameter JSON is parsed once per settings change, never per frame or per LED.
+            var parsed = EffectParameterValues.Parse(settings, Effect.Descriptor);
+            Colors = parsed.Colors;
+            Speed = parsed.Speed;
+            Angle = parsed.Angle;
+            SensorSelector = parsed.SensorSelector;
+            TemperatureLow = parsed.TemperatureLow;
+            TemperatureHigh = parsed.TemperatureHigh;
 
             return true;
         }

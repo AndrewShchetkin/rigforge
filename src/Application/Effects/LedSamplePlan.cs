@@ -30,6 +30,7 @@ internal sealed class LedSamplePlan
         X = new float[ledCount];
         Y = new float[ledCount];
         Enabled = new bool[ledCount];
+        Points = new LedPoint[ledCount];
         Taps = new PrecomputedTap[ledCount];
         Colors = new RgbColor[ledCount];
         _canvasWidth = canvasWidth;
@@ -47,6 +48,9 @@ internal sealed class LedSamplePlan
 
     /// <summary>False for LEDs of disabled or unplaced zones; they are driven black.</summary>
     public bool[] Enabled { get; }
+
+    /// <summary>Canvas position and enabled flag of every LED, for Direct LED Sampling without rasterization.</summary>
+    public LedPoint[] Points { get; }
 
     public PrecomputedTap[] Taps { get; }
 
@@ -82,6 +86,7 @@ internal sealed class LedSamplePlan
                 }
 
                 plan.Enabled[index] = placement is { Enabled: true };
+                plan.Points[index] = new LedPoint(plan.X[index], plan.Y[index], plan.Enabled[index]);
                 index++;
             }
         }
@@ -113,6 +118,20 @@ internal sealed class LedSamplePlan
             var g = (byte)((rgba[tap.P00 + 1] * tap.W00 + rgba[tap.P10 + 1] * tap.W10 + rgba[tap.P01 + 1] * tap.W01 + rgba[tap.P11 + 1] * tap.W11 + 128) >> 8);
             var b = (byte)((rgba[tap.P00 + 2] * tap.W00 + rgba[tap.P10 + 2] * tap.W10 + rgba[tap.P01 + 2] * tap.W01 + rgba[tap.P11 + 2] * tap.W11 + 128) >> 8);
             colors[i] = new RgbColor(r, g, b).Scale(brightness);
+        }
+    }
+
+    /// <summary>
+    /// Finishes a directly sampled frame in <see cref="Colors"/>: LEDs of disabled or unplaced zones are
+    /// driven black, the rest are scaled by the global brightness. Allocation-free.
+    /// </summary>
+    public void ApplyDirectBrightness(float brightness)
+    {
+        var points = Points;
+        var colors = Colors;
+        for (var i = 0; i < colors.Length; i++)
+        {
+            colors[i] = points[i].Enabled ? colors[i].Scale(brightness) : RgbColor.Black;
         }
     }
 

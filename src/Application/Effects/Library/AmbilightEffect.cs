@@ -13,7 +13,7 @@ internal sealed class AmbilightEffect : IEffect
 
     public static readonly EffectDescriptor Info = new(
         EffectId, "Ambilight", "Mirrors the screen content; place zones around the canvas like around your monitor.",
-        IsAnimated: true, UsesColors: false, UsesSpeed: false, UsesAngle: false, UsesSensor: false, MinColors: 0, MaxColors: 0);
+        IsAnimated: true, Parameters: []);
 
     private readonly IScreenCapturer _capturer;
     private readonly ScreenFrameBuffer _frame = new();
@@ -28,6 +28,9 @@ internal sealed class AmbilightEffect : IEffect
     }
 
     public EffectDescriptor Descriptor => Info;
+
+    /// <summary>Screen capture needs the raster canvas, so direct sampling is declined.</summary>
+    public bool TrySamplePoints(ReadOnlySpan<LedPoint> points, Span<RgbColor> destination, in EffectFrameContext context) => false;
 
     public void Render(Span<byte> rgba, in EffectFrameContext context)
     {

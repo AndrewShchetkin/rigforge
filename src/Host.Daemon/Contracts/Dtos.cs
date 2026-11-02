@@ -1,3 +1,5 @@
+using System.Text.Json;
+using RigForge.Application.Effects;
 using RigForge.Core.Models;
 
 namespace RigForge.Host.Daemon.Contracts;
@@ -68,17 +70,25 @@ public sealed record FanStatusDto(
     bool Failsafe,
     string? Message);
 
+/// <summary>One typed effect parameter; the UI builds its editor control from this schema.</summary>
+public sealed record EffectParameterDefinitionDto(
+    string Key,
+    string Label,
+    EffectParameterKind Kind,
+    JsonElement DefaultValue,
+    double? Min,
+    double? Max,
+    double? Step,
+    string? Unit,
+    int MinColors,
+    int MaxColors);
+
 public sealed record EffectDescriptorDto(
     string Id,
     string Name,
     string Description,
     bool IsAnimated,
-    bool UsesColors,
-    bool UsesSpeed,
-    bool UsesAngle,
-    bool UsesSensor,
-    int MinColors,
-    int MaxColors);
+    IReadOnlyList<EffectParameterDefinitionDto> Parameters);
 
 /// <summary>Live LED colors of one zone: RGB triplets in LED order, serialized as base64.</summary>
 public sealed record ZonePreviewDto(string DeviceId, string ZoneId, byte[] Colors);

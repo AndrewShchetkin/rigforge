@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 
@@ -104,6 +105,22 @@ internal sealed class InMemoryProfileStore : IProfileStore
         BackupCount++;
         return Task.CompletedTask;
     }
+}
+
+/// <summary>Builds <see cref="EffectSettings"/> with JSON parameter values, as the wire format carries them.</summary>
+internal static class EffectSettingsFactory
+{
+    public static EffectSettings Create(string effectId, params (string Key, object Value)[] parameters) => new()
+    {
+        EffectId = effectId,
+        Parameters = parameters.ToDictionary(
+            p => p.Key,
+            p => JsonSerializer.SerializeToElement(p.Value),
+            StringComparer.Ordinal),
+    };
+
+    public static IReadOnlyDictionary<string, JsonElement> Parameters(params (string Key, object Value)[] parameters) =>
+        Create("rainbow-wave", parameters).Parameters;
 }
 
 internal static class Approx

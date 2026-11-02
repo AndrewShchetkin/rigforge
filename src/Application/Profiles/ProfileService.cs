@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FluentValidation;
 using Microsoft.Extensions.Logging;
+using RigForge.Application.Effects;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 
@@ -15,7 +16,11 @@ public sealed record ProfileUpdateResult(RigProfile? Profile, IReadOnlyList<stri
 /// Holds the active <see cref="RigProfile"/>. Engines read <see cref="Current"/> (an immutable record) every
 /// iteration, so updates become visible without locks; writes are validated, persisted and then published.
 /// </summary>
-public sealed partial class ProfileService(IProfileStore store, IValidator<RigProfile> validator, ILogger<ProfileService> logger)
+public sealed partial class ProfileService(
+    IProfileStore store,
+    IValidator<RigProfile> validator,
+    ILogger<ProfileService> logger,
+    EffectRegistry? effects = null)
 {
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private volatile RigProfile _current = new();
@@ -84,7 +89,30 @@ public sealed partial class ProfileService(IProfileStore store, IValidator<RigPr
             return;
         }
 
-        _current = loaded;
+        // One-time migration: schemaVersion 1 files (already folded into Parameters by the JSON
+        // converter) are rewritten in the current format with schema defaults filled in.
+        var normalized = NormalizeProfile(loaded);
+        _current = normalized;
+        if (normalized.SchemaVersion != loaded.SchemaVersion || !ReferenceEquals(normalized.Effect, loaded.Effect))
+        {
+            try
+            {
+                await store.SaveAsync(normalized, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogRecoveryPersistFailed(ex);
+            }
+        }
+    }
+
+    /// <summary>Brings a profile to the current schema: version bumped, effect parameters completed from defaults.</summary>
+    private RigProfile NormalizeProfile(RigProfile profile)
+    {
+        var effect = effects is null || profile.Effect is null ? profile.Effect : effects.FillDefaults(profile.Effect);
+        return profile.SchemaVersion == RigProfile.CurrentSchemaVersion && ReferenceEquals(effect, profile.Effect)
+            ? profile
+            : profile with { SchemaVersion = RigProfile.CurrentSchemaVersion, Effect = effect! };
     }
 
     private async Task<RigProfile> SalvageAsync(RigProfile loaded, CancellationToken cancellationToken)
@@ -115,13 +143,13 @@ public sealed partial class ProfileService(IProfileStore store, IValidator<RigPr
             }
         }
 
-        return fallback with
+        return NormalizeProfile(fallback with
         {
             Canvas = canvas,
             Effect = effect,
             Lcd = lcd,
             FanCurves = keptCurves,
-        };
+        });
     }
 
     /// <summary>Applies <paramref name="change"/> atomically. Invalid results are rejected and reported, not thrown.</summary>
@@ -138,6 +166,7 @@ public sealed partial class ProfileService(IProfileStore store, IValidator<RigPr
                 return new ProfileUpdateResult(null, validation.Errors.Select(e => $"{e.PropertyName}: {e.ErrorMessage}").ToArray());
             }
 
+            next = NormalizeProfile(next);
             await store.SaveAsync(next, cancellationToken);
             _current = next;
         }

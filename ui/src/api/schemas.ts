@@ -52,34 +52,57 @@ export const virtualCanvasSchema = z
     });
   }) satisfies z.ZodType<VirtualCanvas>;
 
+const effectParameterValueSchema = z.union([z.array(z.string()), z.number(), z.string()]);
+
 const effectSettingsSchema = z.object({
   effectId: z.string().min(1, 'Pick an effect'),
   brightness: z.number().min(0).max(1),
-  speed: z.number().min(0.05, 'At least 0.05×').max(10, 'At most 10×'),
-  colors: z.array(hexColor),
-  angle: z.number().min(0).lt(360),
-  sensorSelector: sensorSelector.nullable(),
-  temperatureLow: z.number().min(0).max(120),
-  temperatureHigh: z.number().min(0).max(120),
+  parameters: z.record(z.string(), effectParameterValueSchema),
   targetFps: z.int().min(1).max(60),
 }) satisfies z.ZodType<EffectSettings>;
 
-/** Effect settings plus the rules that depend on the selected effect's descriptor. */
+/** Effect settings plus the rules that depend on the selected effect's parameter schema. */
 export function effectSettingsSchemaFor(descriptor: EffectDescriptorDto | undefined) {
   return effectSettingsSchema.superRefine((effect, ctx) => {
     if (!descriptor) {
       ctx.addIssue({ code: 'custom', path: ['effectId'], message: 'Unknown effect' });
       return;
     }
-    const { usesColors, usesSensor, minColors, maxColors } = descriptor;
-    if (usesColors && (effect.colors.length < minColors || effect.colors.length > maxColors)) {
-      ctx.addIssue({ code: 'custom', path: ['colors'], message: `Use ${minColors}–${maxColors} colors` });
+
+    const knownKeys = new Set(descriptor.parameters.map((parameter) => parameter.key));
+    for (const key of Object.keys(effect.parameters)) {
+      if (!knownKeys.has(key)) {
+        ctx.addIssue({ code: 'custom', path: ['parameters', key], message: `Unknown parameter '${key}'` });
+      }
     }
-    if (usesSensor && effect.sensorSelector === null) {
-      ctx.addIssue({ code: 'custom', path: ['sensorSelector'], message: 'Pick a sensor' });
+
+    for (const parameter of descriptor.parameters) {
+      // Missing keys fall back to the schema default, mirroring the daemon.
+      const value = effect.parameters[parameter.key] ?? parameter.defaultValue;
+      const path = ['parameters', parameter.key];
+      if (parameter.kind === 'ColorList') {
+        if (!Array.isArray(value) || value.length < parameter.minColors || value.length > parameter.maxColors) {
+          ctx.addIssue({ code: 'custom', path, message: `Use ${parameter.minColors}–${parameter.maxColors} colors` });
+        } else if (value.some((color) => !/^#[0-9a-f]{6}$/i.test(color))) {
+          ctx.addIssue({ code: 'custom', path, message: 'Colors must be #RRGGBB' });
+        }
+      } else if (parameter.kind === 'FloatRange') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          ctx.addIssue({ code: 'custom', path, message: 'Must be a number' });
+        } else if ((parameter.min !== null && value < parameter.min) || (parameter.max !== null && value > parameter.max)) {
+          ctx.addIssue({ code: 'custom', path, message: `Must be between ${parameter.min} and ${parameter.max}` });
+        }
+      } else if (parameter.kind === 'SensorSelector') {
+        if (typeof value !== 'string' || value.length === 0) {
+          ctx.addIssue({ code: 'custom', path, message: 'Pick a sensor' });
+        }
+      }
     }
-    if (usesSensor && effect.temperatureLow >= effect.temperatureHigh) {
-      ctx.addIssue({ code: 'custom', path: ['temperatureHigh'], message: 'Must be above the low temperature' });
+
+    const low = effect.parameters.temperatureLow ?? descriptor.parameters.find((p) => p.key === 'temperatureLow')?.defaultValue;
+    const high = effect.parameters.temperatureHigh ?? descriptor.parameters.find((p) => p.key === 'temperatureHigh')?.defaultValue;
+    if (typeof low === 'number' && typeof high === 'number' && low >= high) {
+      ctx.addIssue({ code: 'custom', path: ['parameters', 'temperatureHigh'], message: 'Must be above the low temperature' });
     }
   });
 }
@@ -209,12 +232,18 @@ const systemStateSchema = z.looseObject({
   ),
   profile: z.looseObject({
     canvas: canvasShape,
-    effect: z.looseObject({ effectId: str, colors: z.array(str) }),
+    effect: z.looseObject({ effectId: str, parameters: z.record(str, z.unknown()) }),
     fanCurves: z.array(z.looseObject({ id: str, deviceId: str, channelId: str, points: z.array(z.looseObject({})) })),
     lcd: z.looseObject({ mode: z.enum(LCD_MODES), sensorSelectors: z.array(str) }),
   }),
   effectiveCanvas: canvasShape,
-  effects: z.array(z.looseObject({ id: str, name: str, minColors: num, maxColors: num })),
+  effects: z.array(
+    z.looseObject({
+      id: str,
+      name: str,
+      parameters: z.array(z.looseObject({ key: str, kind: str, minColors: num, maxColors: num })),
+    }),
+  ),
   telemetry: z.looseObject({
     timestamp: str,
     readings: z.array(

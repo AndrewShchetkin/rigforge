@@ -1,5 +1,9 @@
-import type { EffectDescriptorDto, EffectSettings } from '../../api/contracts.ts';
-import { roleSelector } from '../../lib/sensors.ts';
+import type {
+  EffectDescriptorDto,
+  EffectParameterDefinitionDto,
+  EffectParameterValue,
+  EffectSettings,
+} from '../../api/contracts.ts';
 
 const PALETTE = ['#FF0080', '#00C8FF', '#8B5CF6', '#22C55E', '#F59E0B', '#EF4444'] as const;
 
@@ -8,18 +12,39 @@ export function suggestedColor(index: number): string {
   return PALETTE[index % PALETTE.length] ?? '#FFFFFF';
 }
 
-/** Patch for switching to another effect: fits the colors into its limits and picks a sensor if it needs one. */
+function fitsKind(value: EffectParameterValue | undefined, parameter: EffectParameterDefinitionDto): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  switch (parameter.kind) {
+    case 'ColorList':
+      return Array.isArray(value);
+    case 'FloatRange':
+      return typeof value === 'number';
+    case 'SensorSelector':
+      return typeof value === 'string';
+  }
+}
+
+/** Patch for switching to another effect: keeps shared parameter values and fills the rest from the schema. */
 export function switchEffectPatch(current: EffectSettings, descriptor: EffectDescriptorDto): Partial<EffectSettings> {
-  const patch: Partial<EffectSettings> = { effectId: descriptor.id };
-  if (descriptor.usesColors) {
-    const colors = current.colors.slice(0, Math.max(descriptor.maxColors, descriptor.minColors));
-    while (colors.length < descriptor.minColors) {
-      colors.push(suggestedColor(colors.length));
+  const parameters: Record<string, EffectParameterValue> = {};
+  for (const parameter of descriptor.parameters) {
+    const existing = current.parameters[parameter.key];
+    if (!fitsKind(existing, parameter)) {
+      parameters[parameter.key] = Array.isArray(parameter.defaultValue) ? [...parameter.defaultValue] : parameter.defaultValue;
+      continue;
     }
-    patch.colors = colors;
+
+    if (parameter.kind === 'ColorList' && Array.isArray(existing)) {
+      const colors = existing.slice(0, Math.max(parameter.maxColors, parameter.minColors));
+      while (colors.length < parameter.minColors) {
+        colors.push(suggestedColor(colors.length));
+      }
+      parameters[parameter.key] = colors;
+    } else {
+      parameters[parameter.key] = existing as EffectParameterValue;
+    }
   }
-  if (descriptor.usesSensor && current.sensorSelector === null) {
-    patch.sensorSelector = roleSelector('CpuTemperature');
-  }
-  return patch;
+  return { effectId: descriptor.id, parameters };
 }

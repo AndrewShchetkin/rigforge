@@ -1,5 +1,11 @@
-import { memo } from 'react';
-import type { EffectDescriptorDto, EffectSettings, SensorSelector } from '../../api/contracts.ts';
+import { memo, type ReactNode } from 'react';
+import type {
+  EffectDescriptorDto,
+  EffectParameterDefinitionDto,
+  EffectParameterValue,
+  EffectSettings,
+  SensorSelector,
+} from '../../api/contracts.ts';
 import { NumberField } from '../../components/ui/NumberField.tsx';
 import { SelectField, type SelectOption } from '../../components/ui/SelectField.tsx';
 import { Slider } from '../../components/ui/Slider.tsx';
@@ -18,17 +24,98 @@ interface EffectFormProps {
   onChange: (patch: Partial<EffectSettings>) => void;
 }
 
-/** Effect parameters; which fields appear is driven by the effect descriptor's flags. */
+function formatFloat(value: number, parameter: EffectParameterDefinitionDto): string {
+  if (parameter.unit === '°') {
+    return `${Math.round(value)}°`;
+  }
+  if (parameter.unit === '×') {
+    return `${value.toFixed(1)}×`;
+  }
+  return parameter.unit ? `${value} ${parameter.unit}` : String(value);
+}
+
+/** Effect parameters; which fields appear is driven by the effect descriptor's parameter schema. */
 export const EffectForm = memo(function EffectForm({ effects, value, errors, sensorOptions, onChange }: EffectFormProps) {
   const descriptor = effects.find((effect) => effect.id === value.effectId);
   const effectOptions: SelectOption<string>[] = effects.map((effect) => ({ value: effect.id, label: effect.name }));
   if (!descriptor) {
     effectOptions.unshift({ value: value.effectId, label: `${value.effectId} (not available)` });
   }
-  const sensorSelectOptions: readonly SelectOption<SensorSelector>[] = [
-    { value: '', label: 'Select a sensor…' },
-    ...withSelectedOptions(sensorOptions, value.sensorSelector === null ? [] : [value.sensorSelector]),
-  ];
+
+  const setParameter = (key: string, parameterValue: EffectParameterValue) =>
+    onChange({ parameters: { ...value.parameters, [key]: parameterValue } });
+
+  const renderParameter = (parameter: EffectParameterDefinitionDto): ReactNode => {
+    const current = value.parameters[parameter.key] ?? parameter.defaultValue;
+    const error = errors[`parameters.${parameter.key}`];
+
+    if (parameter.kind === 'ColorList') {
+      const colors = Array.isArray(current) ? current : [];
+      return (
+        <ColorListEditor
+          key={parameter.key}
+          colors={colors}
+          min={parameter.minColors}
+          max={parameter.maxColors}
+          error={error}
+          onChange={(colors) => setParameter(parameter.key, colors)}
+        />
+      );
+    }
+
+    if (parameter.kind === 'SensorSelector') {
+      const selected = typeof current === 'string' ? current : '';
+      const options: readonly SelectOption<SensorSelector>[] = [
+        { value: '', label: 'Select a sensor…' },
+        ...withSelectedOptions(sensorOptions, selected === '' ? [] : [selected]),
+      ];
+      return (
+        <SelectField
+          key={parameter.key}
+          label={parameter.label}
+          value={selected}
+          options={options}
+          error={error}
+          onChange={(selector) => setParameter(parameter.key, selector)}
+        />
+      );
+    }
+
+    // FloatRange
+    const numeric = typeof current === 'number' ? current : 0;
+    const min = parameter.min ?? 0;
+    const max = parameter.max ?? 100;
+    const step = parameter.step ?? 1;
+    if (parameter.unit === '°C') {
+      return (
+        <NumberField
+          key={parameter.key}
+          label={parameter.label}
+          value={numeric}
+          min={min}
+          max={max}
+          step={step}
+          suffix="°C"
+          error={error}
+          onChange={(next) => setParameter(parameter.key, next)}
+        />
+      );
+    }
+
+    return (
+      <Slider
+        key={parameter.key}
+        label={parameter.label}
+        value={numeric}
+        min={min}
+        max={max}
+        step={step}
+        format={(next) => formatFloat(next, parameter)}
+        error={error}
+        onChange={(next) => setParameter(parameter.key, roundTo(next, 2))}
+      />
+    );
+  };
 
   return (
     <div className="space-y-5">
@@ -54,69 +141,7 @@ export const EffectForm = memo(function EffectForm({ effects, value, errors, sen
         error={errors.brightness}
         onChange={(percent) => onChange({ brightness: percent / 100 })}
       />
-      {descriptor?.usesSpeed && (
-        <Slider
-          label="Speed"
-          value={value.speed}
-          min={0.1}
-          max={5}
-          step={0.1}
-          format={(speed) => `${speed.toFixed(1)}×`}
-          error={errors.speed}
-          onChange={(speed) => onChange({ speed: roundTo(speed, 2) })}
-        />
-      )}
-      {descriptor?.usesColors && (
-        <ColorListEditor
-          colors={value.colors}
-          min={descriptor.minColors}
-          max={descriptor.maxColors}
-          error={errors.colors}
-          onChange={(colors) => onChange({ colors })}
-        />
-      )}
-      {descriptor?.usesAngle && (
-        <Slider
-          label="Direction"
-          value={value.angle}
-          min={0}
-          max={359}
-          format={(angle) => `${Math.round(angle)}°`}
-          error={errors.angle}
-          onChange={(angle) => onChange({ angle })}
-        />
-      )}
-      {descriptor?.usesSensor && (
-        <div className="space-y-4 rounded-lg border border-zinc-800 p-3">
-          <SelectField
-            label="Sensor"
-            value={value.sensorSelector ?? ''}
-            options={sensorSelectOptions}
-            error={errors.sensorSelector}
-            onChange={(selector) => onChange({ sensorSelector: selector === '' ? null : selector })}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <NumberField
-              label="Cold at"
-              value={value.temperatureLow}
-              min={0}
-              max={120}
-              suffix="°C"
-              error={errors.temperatureLow}
-              onChange={(temperatureLow) => onChange({ temperatureLow })}
-            />
-            <NumberField
-              label="Hot at"
-              value={value.temperatureHigh}
-              min={0}
-              max={120}
-              suffix="°C"
-              error={errors.temperatureHigh}
-              onChange={(temperatureHigh) => onChange({ temperatureHigh })}
-            />
-          </div>
-        </div>
-      )}
+      {descriptor?.parameters.map(renderParameter)}
       {descriptor?.isAnimated && (
         <Slider
           label="Frame rate"

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentValidation;
 using RigForge.Application.Effects;
 using RigForge.Core.Models;
@@ -94,14 +95,100 @@ public sealed class EffectSettingsValidator : AbstractValidator<EffectSettings>
     {
         RuleFor(e => e.EffectId).NotEmpty().Must(effects.Contains).WithMessage(e => $"Unknown effect '{e.EffectId}'.");
         RuleFor(e => e.Brightness).InclusiveBetween(0f, 1f);
-        RuleFor(e => e.Speed).InclusiveBetween(0.05f, 10f);
-        RuleFor(e => e.Angle).InclusiveBetween(-360f, 360f);
         RuleFor(e => e.TargetFps).InclusiveBetween(1, 120);
-        RuleFor(e => e.TemperatureHigh).GreaterThan(e => e.TemperatureLow);
-        RuleFor(e => e.SensorSelector).MaximumLength(256);
-        RuleFor(e => e.Colors).Cascade(CascadeMode.Stop).NotNull().Must(c => c.Count <= 16)
-            .WithMessage("At most 16 colors are supported.");
-        RuleForEach(e => e.Colors).Must(c => RgbColor.TryParse(c, out _)).WithMessage("Colors must be #RRGGBB.");
+        RuleFor(e => e.Parameters).Cascade(CascadeMode.Stop).NotNull()
+            .Custom((parameters, context) => ValidateParameters(context.InstanceToValidate, effects, context));
+    }
+
+    private static void ValidateParameters(EffectSettings settings, EffectRegistry effects, ValidationContext<EffectSettings> context)
+    {
+        if (!effects.TryGetDescriptor(settings.EffectId, out var descriptor))
+        {
+            return; // The EffectId rule already reports the unknown effect.
+        }
+
+        var knownKeys = descriptor.Parameters.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in settings.Parameters.Keys)
+        {
+            if (!knownKeys.Contains(key))
+            {
+                context.AddFailure(nameof(EffectSettings.Parameters), $"Unknown parameter '{key}' for effect '{settings.EffectId}'.");
+            }
+        }
+
+        foreach (var definition in descriptor.Parameters)
+        {
+            // Missing keys are filled from the schema default before saving, so validate the effective value.
+            EffectParameterValues.TryGetValue(settings, definition, out var value);
+            switch (definition.Kind)
+            {
+                case EffectParameterKind.ColorList:
+                    ValidateColorList(definition, value, context);
+                    break;
+                case EffectParameterKind.FloatRange:
+                    if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be a number.");
+                    }
+                    else if ((definition.Min is not null && number < definition.Min) || (definition.Max is not null && number > definition.Max))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be between {definition.Min} and {definition.Max}.");
+                    }
+
+                    break;
+                case EffectParameterKind.SensorSelector:
+                    if (value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must name a sensor.");
+                    }
+                    else if (value.GetString()!.Length > 256)
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be at most 256 characters.");
+                    }
+
+                    break;
+            }
+        }
+
+        if (descriptor.FindParameter(EffectParameterValues.TemperatureLowKey) is not null
+            && descriptor.FindParameter(EffectParameterValues.TemperatureHighKey) is not null)
+        {
+            var low = EffectParameterValues.GetFloat(settings, descriptor, EffectParameterValues.TemperatureLowKey, 35f);
+            var high = EffectParameterValues.GetFloat(settings, descriptor, EffectParameterValues.TemperatureHighKey, 80f);
+            if (high <= low)
+            {
+                context.AddFailure(nameof(EffectSettings.Parameters), "Parameter 'temperatureHigh' must be above 'temperatureLow'.");
+            }
+        }
+    }
+
+    private static void ValidateColorList(
+        EffectParameterDefinition definition,
+        JsonElement value,
+        ValidationContext<EffectSettings> context)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be a list of #RRGGBB colors.");
+            return;
+        }
+
+        var count = value.GetArrayLength();
+        if (count < definition.MinColors || count > definition.MaxColors)
+        {
+            context.AddFailure(
+                nameof(EffectSettings.Parameters),
+                $"Parameter '{definition.Key}' needs between {definition.MinColors} and {definition.MaxColors} colors.");
+        }
+
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || !RgbColor.TryParse(item.GetString(), out _))
+            {
+                context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' colors must be #RRGGBB.");
+                break;
+            }
+        }
     }
 }
 

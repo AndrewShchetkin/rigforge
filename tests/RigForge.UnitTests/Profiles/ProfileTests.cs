@@ -207,13 +207,11 @@ public sealed class ProfileTests
 
         var profiles = new ProfileService(new InMemoryProfileStore(), _validator, NullLogger<ProfileService>.Instance);
         await profiles.UpdateEffectAsync(
-            new EffectSettings
-            {
-                EffectId = TemperatureEffect.EffectId,
-                Colors = ["#0000FF", "#FF0000"],
-                TemperatureLow = 20f,
-                TemperatureHigh = 80f,
-            },
+            EffectSettingsFactory.Create(
+                TemperatureEffect.EffectId,
+                ("colors", new[] { "#0000FF", "#FF0000" }),
+                ("temperatureLow", 20f),
+                ("temperatureHigh", 80f)),
             TestContext.Current.CancellationToken);
 
         var time = new ManualTimeProvider(DateTimeOffset.UtcNow);

@@ -103,17 +103,30 @@ export interface FanStatusDto {
   message: string | null;
 }
 
+export type EffectParameterKind = 'ColorList' | 'FloatRange' | 'SensorSelector';
+
+/** Raw value of one effect parameter, as stored in `EffectSettings.parameters`. */
+export type EffectParameterValue = string[] | number | string;
+
+export interface EffectParameterDefinitionDto {
+  key: string;
+  label: string;
+  kind: EffectParameterKind;
+  defaultValue: EffectParameterValue;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  unit: string | null;
+  minColors: number;
+  maxColors: number;
+}
+
 export interface EffectDescriptorDto {
   id: string;
   name: string;
   description: string;
   isAnimated: boolean;
-  usesColors: boolean;
-  usesSpeed: boolean;
-  usesAngle: boolean;
-  usesSensor: boolean;
-  minColors: number;
-  maxColors: number;
+  parameters: EffectParameterDefinitionDto[];
 }
 
 export interface ZonePreviewDto {
@@ -155,15 +168,8 @@ export interface EffectSettings {
   effectId: string;
   /** 0..1 */
   brightness: number;
-  /** 0.05..10 */
-  speed: number;
-  /** "#RRGGBB" */
-  colors: string[];
-  /** degrees */
-  angle: number;
-  sensorSelector: SensorSelector | null;
-  temperatureLow: number;
-  temperatureHigh: number;
+  /** Effect-specific values by parameter key, described by `EffectDescriptorDto.parameters`. */
+  parameters: Record<string, EffectParameterValue>;
   /** 1..60 */
   targetFps: number;
 }

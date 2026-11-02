@@ -43,8 +43,9 @@ internal static class DtoMapper
         status.CurveId, status.DeviceId, status.ChannelId, status.Temperature, status.TargetDuty, status.AppliedDuty, status.Failsafe, status.Message);
 
     public static EffectDescriptorDto ToDto(EffectDescriptor effect) => new(
-        effect.Id, effect.Name, effect.Description, effect.IsAnimated, effect.UsesColors, effect.UsesSpeed,
-        effect.UsesAngle, effect.UsesSensor, effect.MinColors, effect.MaxColors);
+        effect.Id, effect.Name, effect.Description, effect.IsAnimated,
+        effect.Parameters.Select(p => new EffectParameterDefinitionDto(
+            p.Key, p.Label, p.Kind, p.DefaultValue, p.Min, p.Max, p.Step, p.Unit, p.MinColors, p.MaxColors)).ToArray());
 
     public static LedPreviewDto ToDto(IReadOnlyList<ZonePreview> preview) =>
         new(preview.Select(z => new ZonePreviewDto(z.DeviceId, z.ZoneId, z.Rgb)).ToArray());

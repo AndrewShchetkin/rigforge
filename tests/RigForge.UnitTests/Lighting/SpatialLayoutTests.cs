@@ -121,8 +121,14 @@ public sealed class SpatialLayoutTests
     public void Pure_csharp_effects_render_into_rgba_span_without_skia()
     {
         var rgba = new byte[16 * 8 * 4];
-        var settings = new EffectSettings { Colors = ["#FF0040", "#00FF80"], Speed = 1f, Angle = 45f };
-        var ctx = new EffectFrameContext(16, 8, Time: 0.5, settings, [new RgbColor(255, 0, 64), new RgbColor(0, 255, 128)], TelemetrySnapshot.Empty);
+        var settings = EffectSettingsFactory.Create(
+            "gradient",
+            ("colors", new[] { "#FF0040", "#00FF80" }),
+            ("speed", 1f),
+            ("angle", 45f));
+        var ctx = new EffectFrameContext(
+            16, 8, Time: 0.5, settings, [new RgbColor(255, 0, 64), new RgbColor(0, 255, 128)], TelemetrySnapshot.Empty,
+            Speed: 1f, Angle: 45f);
 
         using var solid = new SolidColorEffect();
         solid.Render(rgba, in ctx);

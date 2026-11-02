@@ -32,7 +32,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"effectId\": \"gradient\",\n  \"brightness\": 0.8,\n  \"speed\": 1.5,\n  \"colors\": [\"#FF0080\", \"#00C8FF\"],\n  \"angle\": 45,\n  \"sensorSelector\": null,\n  \"temperatureLow\": 35,\n  \"temperatureHigh\": 80,\n  \"targetFps\": 60\n}"
+              "raw": "{\n  \"effectId\": \"gradient\",\n  \"brightness\": 0.8,\n  \"targetFps\": 60,\n  \"parameters\": {\n    \"colors\": [\"#FF0080\", \"#00C8FF\"],\n    \"speed\": 1.5,\n    \"angle\": 45\n  }\n}"
             }
           }
         },

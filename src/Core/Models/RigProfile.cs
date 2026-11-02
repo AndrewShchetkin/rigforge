@@ -3,7 +3,7 @@ namespace RigForge.Core.Models;
 /// <summary>Everything the user configures; persisted as a single JSON document.</summary>
 public sealed record RigProfile
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
 
