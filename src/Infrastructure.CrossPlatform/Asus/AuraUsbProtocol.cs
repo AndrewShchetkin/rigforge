@@ -86,44 +86,63 @@ public static class AuraUsbProtocol
         return channels;
     }
 
-    /// <summary>Direct-mode packets for one channel: 20 LEDs per packet, apply flag on the last one.</summary>
-    public static IReadOnlyList<byte[]> DirectFrame(byte directChannel, ReadOnlySpan<RgbColor> colors)
+    /// <summary>Number of direct-mode packets needed for <paramref name="ledCount"/> LEDs (20 per packet).</summary>
+    public static int PacketCount(int ledCount)
     {
-        var packets = new List<byte[]>((colors.Length + LedsPerPacket - 1) / LedsPerPacket);
-        var command = directChannel;
-        var offset = 0;
-        var configured = 0;
-
-        while (configured < colors.Length)
+        if (ledCount < 0)
         {
-            var inPacket = Math.Min(LedsPerPacket, colors.Length - configured);
-            var first = configured;
-            configured += inPacket;
-            if (configured >= colors.Length)
-            {
-                command |= ApplyFlag;
-            }
-
-            var report = Report(DirectCommand, command, (byte)offset, (byte)inPacket);
-            for (var i = 0; i < inPacket; i++)
-            {
-                var color = colors[first + i];
-                report[5 + i * 3] = color.R;
-                report[6 + i * 3] = color.G;
-                report[7 + i * 3] = color.B;
-            }
-
-            packets.Add(report);
-
-            offset += inPacket;
-            if (configured > 255)
-            {
-                command |= OffsetOverflowFlag;
-                offset = configured - 256;
-            }
+            throw new ArgumentOutOfRangeException(nameof(ledCount), ledCount, "LED count cannot be negative.");
         }
 
-        return packets;
+        return (ledCount + LedsPerPacket - 1) / LedsPerPacket;
+    }
+
+    /// <summary>
+    /// Writes one direct-mode packet for a channel into <paramref name="packet"/>: 20 LEDs per packet,
+    /// apply flag on the last one. Allocation-free; the caller owns the packet buffer.
+    /// </summary>
+    public static void WriteDirectPacket(byte directChannel, ReadOnlySpan<RgbColor> colors, int packetIndex, Span<byte> packet)
+    {
+        if (packet.Length < ReportLength)
+        {
+            throw new ArgumentException($"A direct packet buffer needs at least {ReportLength} bytes.", nameof(packet));
+        }
+
+        var packetCount = PacketCount(colors.Length);
+        if (packetIndex < 0 || packetIndex >= packetCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(packetIndex), packetIndex, "Packet index is outside the frame.");
+        }
+
+        var start = packetIndex * LedsPerPacket;
+        var inPacket = Math.Min(LedsPerPacket, colors.Length - start);
+
+        byte channel = directChannel;
+        if (start > 255)
+        {
+            channel |= OffsetOverflowFlag;
+        }
+
+        if (packetIndex == packetCount - 1)
+        {
+            channel |= ApplyFlag;
+        }
+
+        var offset = start > 255 ? start - 256 : start;
+
+        packet.Clear();
+        packet[0] = ReportId;
+        packet[1] = DirectCommand;
+        packet[2] = channel;
+        packet[3] = (byte)offset;
+        packet[4] = (byte)inPacket;
+        for (var i = 0; i < inPacket; i++)
+        {
+            var color = colors[start + i];
+            packet[5 + i * 3] = color.R;
+            packet[6 + i * 3] = color.G;
+            packet[7 + i * 3] = color.B;
+        }
     }
 
     private static byte[] Report(params ReadOnlySpan<byte> payload)

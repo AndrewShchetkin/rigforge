@@ -169,12 +169,16 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
         lock (_writeLock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            Span<byte> packet = stackalloc byte[NzxtProtocol.ReportLength];
             var offset = 0;
             for (var i = 0; i < Zones.Count && offset < colors.Length; i++)
             {
                 var count = Math.Min(Zones[i].LedCount, colors.Length - offset);
-                foreach (var packet in NzxtProtocol.Hue2Frame(_zoneChannels[i], colors.Span.Slice(offset, count)))
+                var channelColors = colors.Span.Slice(offset, count);
+                var packetCount = NzxtProtocol.Hue2PacketCount(count);
+                for (var packetIndex = 0; packetIndex < packetCount; packetIndex++)
                 {
+                    NzxtProtocol.WriteHue2Packet(_zoneChannels[i], packetIndex, channelColors, packet);
                     _hid.Write(packet);
                 }
 

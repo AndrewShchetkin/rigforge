@@ -29,12 +29,8 @@ public sealed record KingstonSlotProbeResult(
     byte? ModelCode,
     string Detail);
 
-/// <summary>
-/// A single register write across one or more DIMM slots, followed by a single 10 ms controller delay.
-/// </summary>
-public sealed record KingstonRegisterBatchWrite(
-    byte Register,
-    IReadOnlyList<(int SlotPosition, byte Address, byte Value)> Writes);
+/// <summary>A single register write to one DIMM slot within a frame.</summary>
+public readonly record struct KingstonRegisterWrite(int SlotPosition, byte Address, byte Register, byte Value);
 
 /// <summary>
 /// Hardware firewall for SMBus access. Blocks any read or write outside the Kingston FURY DDR5 RGB
@@ -314,22 +310,29 @@ public static class KingstonFuryDramProtocol
     }
 
     /// <summary>
-    /// Computes the minimal sequence of SMBus register writes required to transition from the cached register
-    /// state to <paramref name="colors"/>. Unchanged registers are omitted so static frames produce zero writes.
+    /// Writes the minimal sequence of SMBus register writes required to transition from the cached register
+    /// state to <paramref name="colors"/> into <paramref name="destination"/> and returns how many were written.
+    /// Unchanged registers are omitted so static frames produce zero writes. Allocation-free; the caller owns
+    /// the destination buffer.
     /// </summary>
-    public static IReadOnlyList<KingstonRegisterBatchWrite> BuildFrameWritePlan(
-        IReadOnlyList<byte> slotAddresses,
+    public static int BuildFrameWrites(
+        ReadOnlySpan<byte> slotAddresses,
         ReadOnlySpan<RgbColor> colors,
         byte brightness,
-        byte?[,] registerCache)
+        byte?[,] registerCache,
+        Span<KingstonRegisterWrite> destination)
     {
-        ArgumentNullException.ThrowIfNull(slotAddresses);
         ArgumentNullException.ThrowIfNull(registerCache);
 
-        var slotCount = slotAddresses.Count;
+        var slotCount = slotAddresses.Length;
         if (slotCount == 0)
         {
-            return [];
+            return 0;
+        }
+
+        if (registerCache.GetLength(0) < slotCount)
+        {
+            throw new ArgumentException("The register cache has fewer slots than the slot address list.", nameof(registerCache));
         }
 
         var expectedLeds = slotCount * LedsPerDimmDdr5;
@@ -340,9 +343,9 @@ public static class KingstonFuryDramProtocol
 
         var clampedBrightness = Math.Clamp(brightness, (byte)0, MaxBrightness);
         var numSlotsValue = (byte)Math.Clamp(slotCount, 1, 4);
-        var batches = new List<KingstonRegisterBatchWrite>(40);
+        var written = 0;
 
-        AddUniformRegisterIfChanged(batches, slotAddresses, registerCache, RegisterMode, ModeDirect);
+        AddUniformRegisterIfChanged(slotAddresses, registerCache, RegisterMode, ModeDirect, destination, ref written);
 
         for (var ledIndex = 0; ledIndex < LedsPerDimmDdr5; ledIndex++)
         {
@@ -351,69 +354,79 @@ public static class KingstonFuryDramProtocol
             var blueReg = (byte)(RegisterBaseBlue + (3 * ledIndex));
 
             // Follow OpenRGB's KingstonFuryDRAMController::SetLEDColors order: red, blue, green.
-            AddPerSlotRegisterIfChanged(batches, slotAddresses, registerCache, redReg, colors, ledIndex, static c => c.R);
-            AddPerSlotRegisterIfChanged(batches, slotAddresses, registerCache, blueReg, colors, ledIndex, static c => c.B);
-            AddPerSlotRegisterIfChanged(batches, slotAddresses, registerCache, greenReg, colors, ledIndex, static c => c.G);
+            AddPerSlotRegisterIfChanged(slotAddresses, registerCache, redReg, colors, ledIndex, ColorComponent.Red, destination, ref written);
+            AddPerSlotRegisterIfChanged(slotAddresses, registerCache, blueReg, colors, ledIndex, ColorComponent.Blue, destination, ref written);
+            AddPerSlotRegisterIfChanged(slotAddresses, registerCache, greenReg, colors, ledIndex, ColorComponent.Green, destination, ref written);
         }
 
-        AddUniformRegisterIfChanged(batches, slotAddresses, registerCache, RegisterBrightness, clampedBrightness);
-        AddUniformRegisterIfChanged(batches, slotAddresses, registerCache, RegisterNumSlots, numSlotsValue);
+        AddUniformRegisterIfChanged(slotAddresses, registerCache, RegisterBrightness, clampedBrightness, destination, ref written);
+        AddUniformRegisterIfChanged(slotAddresses, registerCache, RegisterNumSlots, numSlotsValue, destination, ref written);
 
-        return batches;
+        return written;
+    }
+
+    private enum ColorComponent
+    {
+        Red,
+        Green,
+        Blue,
     }
 
     private static void AddUniformRegisterIfChanged(
-        List<KingstonRegisterBatchWrite> batches,
-        IReadOnlyList<byte> slotAddresses,
+        ReadOnlySpan<byte> slotAddresses,
         byte?[,] registerCache,
         byte register,
-        byte value)
+        byte value,
+        Span<KingstonRegisterWrite> destination,
+        ref int written)
     {
-        List<(int SlotPosition, byte Address, byte Value)>? writes = null;
-        for (var slotPos = 0; slotPos < slotAddresses.Count; slotPos++)
+        for (var slotPos = 0; slotPos < slotAddresses.Length; slotPos++)
         {
             if (registerCache[slotPos, register] == value)
             {
                 continue;
             }
 
-            writes ??= new List<(int, byte, byte)>(slotAddresses.Count);
-            writes.Add((slotPos, slotAddresses[slotPos], value));
-        }
-
-        if (writes is { Count: > 0 })
-        {
-            batches.Add(new KingstonRegisterBatchWrite(register, writes));
+            Append(destination, ref written, new KingstonRegisterWrite(slotPos, slotAddresses[slotPos], register, value));
         }
     }
 
     private static void AddPerSlotRegisterIfChanged(
-        List<KingstonRegisterBatchWrite> batches,
-        IReadOnlyList<byte> slotAddresses,
+        ReadOnlySpan<byte> slotAddresses,
         byte?[,] registerCache,
         byte register,
         ReadOnlySpan<RgbColor> colors,
         int ledIndex,
-        Func<RgbColor, byte> selector)
+        ColorComponent component,
+        Span<KingstonRegisterWrite> destination,
+        ref int written)
     {
-        List<(int SlotPosition, byte Address, byte Value)>? writes = null;
-        for (var slotPos = 0; slotPos < slotAddresses.Count; slotPos++)
+        for (var slotPos = 0; slotPos < slotAddresses.Length; slotPos++)
         {
             var color = colors[(slotPos * LedsPerDimmDdr5) + ledIndex];
-            var value = selector(color);
+            var value = component switch
+            {
+                ColorComponent.Red => color.R,
+                ColorComponent.Green => color.G,
+                _ => color.B,
+            };
             if (registerCache[slotPos, register] == value)
             {
                 continue;
             }
 
-            writes ??= new List<(int, byte, byte)>(slotAddresses.Count);
-            writes.Add((slotPos, slotAddresses[slotPos], value));
+            Append(destination, ref written, new KingstonRegisterWrite(slotPos, slotAddresses[slotPos], register, value));
+        }
+    }
+
+    private static void Append(Span<KingstonRegisterWrite> destination, ref int written, KingstonRegisterWrite write)
+    {
+        if (written >= destination.Length)
+        {
+            throw new ArgumentException("The destination buffer is too small for the frame writes.", nameof(destination));
         }
 
-        if (writes is { Count: > 0 })
-        {
-            batches.Add(new KingstonRegisterBatchWrite(register, writes));
-        }
+        destination[written++] = write;
     }
 
     private static bool TryReadRegisterWithRetry(

@@ -14,7 +14,7 @@ public sealed class AuraUsbProtocolTests
     {
         var colors = Enumerable.Range(0, 25).Select(i => new RgbColor((byte)i, 1, 2)).ToArray();
 
-        var packets = AuraUsbProtocol.DirectFrame(directChannel: 1, colors);
+        var packets = CollectDirectPackets(directChannel: 1, colors);
 
         Assert.Equal(2, packets.Count);
         Assert.All(packets, p => Assert.Equal(65, p.Length));
@@ -25,13 +25,27 @@ public sealed class AuraUsbProtocolTests
     [Fact]
     public void Direct_frame_sets_the_overflow_flag_past_256_leds()
     {
-        var packets = AuraUsbProtocol.DirectFrame(0x04, new RgbColor[300]);
+        var packets = CollectDirectPackets(0x04, new RgbColor[300]);
 
         Assert.Equal(15, packets.Count);
         Assert.Equal(240, packets[12][3]);
         Assert.Equal(0x04 | 0x10, packets[13][2]);
         Assert.Equal(4, packets[13][3]);
         Assert.Equal(0x04 | 0x10 | 0x80, packets[14][2]);
+    }
+
+    private static List<byte[]> CollectDirectPackets(byte directChannel, RgbColor[] colors)
+    {
+        var packets = new List<byte[]>();
+        var packetCount = AuraUsbProtocol.PacketCount(colors.Length);
+        for (var i = 0; i < packetCount; i++)
+        {
+            var packet = new byte[AuraUsbProtocol.ReportLength];
+            AuraUsbProtocol.WriteDirectPacket(directChannel, colors, i, packet);
+            packets.Add(packet);
+        }
+
+        return packets;
     }
 
     [Theory]

@@ -53,12 +53,26 @@ public sealed class NzxtProtocolTests
     {
         var colors = Enumerable.Range(0, 25).Select(i => new RgbColor((byte)i, (byte)(100 + i), 200)).ToArray();
 
-        var packets = NzxtProtocol.Hue2Frame(channel: 1, colors);
+        var packets = CollectHue2Packets(channel: 1, colors);
 
         Assert.Equal(3, packets.Count);
         Assert.Equal(new byte[] { 0x22, 0x10, 0x02, 0x00, 100, 0, 200 }, packets[0][..7]);
         Assert.Equal(new byte[] { 0x22, 0x11, 0x02, 0x00, 120, 20, 200 }, packets[1][..7]);
         Assert.Equal(new byte[] { 0x22, 0xA0, 0x02, 0x00, 0x01, 0x00, 0x00, 0x28 }, packets[2][..8]);
+    }
+
+    private static List<byte[]> CollectHue2Packets(int channel, RgbColor[] colors)
+    {
+        var packets = new List<byte[]>();
+        var packetCount = NzxtProtocol.Hue2PacketCount(colors.Length);
+        for (var i = 0; i < packetCount; i++)
+        {
+            var packet = new byte[NzxtProtocol.ReportLength];
+            NzxtProtocol.WriteHue2Packet(channel, i, colors, packet);
+            packets.Add(packet);
+        }
+
+        return packets;
     }
 
     [Fact]

@@ -124,14 +124,18 @@ internal sealed class AsusAuraUsbDevice : IRgbDevice
         lock (_transaction)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            Span<byte> packet = stackalloc byte[AuraUsbProtocol.ReportLength];
             var offset = 0;
             for (var i = 0; i < zones.Count && offset < colors.Length; i++)
             {
                 var count = Math.Min(zones[i].LedCount, colors.Length - offset);
                 if (count > 0)
                 {
-                    foreach (var packet in AuraUsbProtocol.DirectFrame(_channels[i].DirectChannel, colors.Span.Slice(offset, count)))
+                    var channelColors = colors.Span.Slice(offset, count);
+                    var packetCount = AuraUsbProtocol.PacketCount(count);
+                    for (var packetIndex = 0; packetIndex < packetCount; packetIndex++)
                     {
+                        AuraUsbProtocol.WriteDirectPacket(_channels[i].DirectChannel, channelColors, packetIndex, packet);
                         _hid.Write(packet);
                     }
                 }

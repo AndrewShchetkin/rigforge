@@ -14,6 +14,7 @@ internal sealed class KingstonFuryDramDevice : IRgbDevice
     private readonly ISmbusController _bus;
     private readonly byte[] _slotAddresses;
     private readonly byte?[,] _registerCache;
+    private readonly KingstonRegisterWrite[] _frameWrites;
     private readonly byte _brightness;
     private readonly byte _maxAllowedAddress;
     private readonly bool _dryRun;
@@ -43,6 +44,7 @@ internal sealed class KingstonFuryDramDevice : IRgbDevice
         _bus = bus;
         _slotAddresses = slots.Select(static s => s.Address).ToArray();
         _registerCache = new byte?[_slotAddresses.Length, 256];
+        _frameWrites = new KingstonRegisterWrite[_slotAddresses.Length * (3 + KingstonFuryDramProtocol.LedsPerDimmDdr5 * 3)];
         _brightness = (byte)Math.Clamp(brightnessPercent, 0, KingstonFuryDramProtocol.MaxBrightness);
         _maxAllowedAddress = maxAllowedAddress;
         _dryRun = dryRun;
@@ -121,8 +123,8 @@ internal sealed class KingstonFuryDramDevice : IRgbDevice
                 return ValueTask.CompletedTask;
             }
 
-            var plan = KingstonFuryDramProtocol.BuildFrameWritePlan(_slotAddresses, colors.Span, _brightness, _registerCache);
-            if (plan.Count == 0)
+            var written = KingstonFuryDramProtocol.BuildFrameWrites(_slotAddresses, colors.Span, _brightness, _registerCache, _frameWrites);
+            if (written == 0)
             {
                 return ValueTask.CompletedTask;
             }
@@ -136,19 +138,17 @@ internal sealed class KingstonFuryDramDevice : IRgbDevice
             SendBeginTransactionLocked();
             try
             {
-                foreach (var batch in plan)
+                for (var i = 0; i < written; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    foreach (var (slotPos, address, value) in batch.Writes)
+                    var write = _frameWrites[i];
+                    if (WriteRegisterWithRetryLocked(write.Address, write.Register, write.Value))
                     {
-                        if (WriteRegisterWithRetryLocked(address, batch.Register, value))
-                        {
-                            _registerCache[slotPos, batch.Register] = value;
-                        }
-                        else
-                        {
-                            throw new IOException($"Kingston FURY DIMM at 0x{address:X2} did not acknowledge register 0x{batch.Register:X2}.");
-                        }
+                        _registerCache[write.SlotPosition, write.Register] = write.Value;
+                    }
+                    else
+                    {
+                        throw new IOException($"Kingston FURY DIMM at 0x{write.Address:X2} did not acknowledge register 0x{write.Register:X2}.");
                     }
                 }
             }

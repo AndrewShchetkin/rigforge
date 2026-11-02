@@ -100,40 +100,63 @@ public static class NzxtProtocol
         return report;
     }
 
-    /// <summary>Direct-mode color packet for one group of up to 20 LEDs (colors are sent in GRB order).</summary>
-    public static byte[] Hue2Direct(int channel, int group, ReadOnlySpan<RgbColor> colors)
+    /// <summary>Number of packets in one channel frame: one or two color groups followed by the apply packet.</summary>
+    public static int Hue2PacketCount(int ledCount)
     {
-        var report = new byte[ReportLength];
-        report[0] = 0x22;
-        report[1] = (byte)(0x10 | group);
-        report[2] = (byte)(1 << channel);
-        var count = Math.Min(colors.Length, LedsPerPacket);
-        for (var i = 0; i < count; i++)
+        if (ledCount < 0)
         {
-            report[4 + i * 3] = colors[i].G;
-            report[5 + i * 3] = colors[i].R;
-            report[6 + i * 3] = colors[i].B;
+            throw new ArgumentOutOfRangeException(nameof(ledCount), ledCount, "LED count cannot be negative.");
         }
 
-        return report;
+        var count = Math.Min(ledCount, MaxLedsPerChannel);
+        return count > LedsPerPacket ? 3 : 2;
     }
 
-    /// <summary>Commits the direct-mode colors of a channel.</summary>
-    public static byte[] Hue2Apply(int channel) =>
-        Report(0x22, 0xA0, (byte)(1 << channel), 0x00, 0x01, 0x00, 0x00, 0x28, 0x00, 0x00, 0x80, 0x00, 0x32, 0x00, 0x00, 0x01);
-
-    /// <summary>All packets for one channel frame: one or two color groups followed by the apply packet.</summary>
-    public static IReadOnlyList<byte[]> Hue2Frame(int channel, ReadOnlySpan<RgbColor> colors)
+    /// <summary>
+    /// Writes one packet of a channel frame into <paramref name="packet"/>: color groups of up to 20 LEDs
+    /// in GRB order, followed by the apply packet. Allocation-free; the caller owns the packet buffer.
+    /// </summary>
+    public static void WriteHue2Packet(int channel, int packetIndex, ReadOnlySpan<RgbColor> colors, Span<byte> packet)
     {
-        var count = Math.Min(colors.Length, MaxLedsPerChannel);
-        var packets = new List<byte[]>(3) { Hue2Direct(channel, 0, colors[..Math.Min(count, LedsPerPacket)]) };
-        if (count > LedsPerPacket)
+        if (packet.Length < ReportLength)
         {
-            packets.Add(Hue2Direct(channel, 1, colors[LedsPerPacket..count]));
+            throw new ArgumentException($"A HUE 2 packet buffer needs at least {ReportLength} bytes.", nameof(packet));
         }
 
-        packets.Add(Hue2Apply(channel));
-        return packets;
+        var count = Math.Min(colors.Length, MaxLedsPerChannel);
+        var packetCount = Hue2PacketCount(count);
+        if (packetIndex < 0 || packetIndex >= packetCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(packetIndex), packetIndex, "Packet index is outside the frame.");
+        }
+
+        packet.Clear();
+        packet[0] = 0x22;
+        packet[2] = (byte)(1 << channel);
+
+        if (packetIndex == packetCount - 1)
+        {
+            // Apply packet: commits the direct-mode colors of the channel.
+            packet[1] = 0xA0;
+            packet[4] = 0x01;
+            packet[7] = 0x28;
+            packet[10] = 0x80;
+            packet[12] = 0x32;
+            packet[15] = 0x01;
+            return;
+        }
+
+        var group = packetIndex;
+        packet[1] = (byte)(0x10 | group);
+        var start = group * LedsPerPacket;
+        var inPacket = Math.Min(count - start, LedsPerPacket);
+        for (var i = 0; i < inPacket; i++)
+        {
+            var color = colors[start + i];
+            packet[4 + i * 3] = color.G;
+            packet[5 + i * 3] = color.R;
+            packet[6 + i * 3] = color.B;
+        }
     }
 
     public static bool IsResponse(byte[] report, byte command, byte subCommand) =>
