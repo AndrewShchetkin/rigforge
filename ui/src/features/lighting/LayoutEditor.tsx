@@ -8,9 +8,9 @@ import { Card } from '../../components/ui/Card.tsx';
 import { GridIcon, UndoIcon } from '../../components/ui/icons.tsx';
 import { roundTo } from '../../lib/math.ts';
 import { firstError, toFieldErrors } from '../../lib/validation.ts';
-import { indexZones, placementKey } from '../../lib/zones.ts';
+import { indexZones, placementKey, zoneKey } from '../../lib/zones.ts';
 import { useDaemonApi, useSystem } from '../../state/hooks.ts';
-import { autoArrange, canvasEquals, patchPlacement, type PlacementPatch } from './layoutModel.ts';
+import { addSegment, autoArrange, canvasEquals, patchPlacement, removeSegment, type PlacementPatch } from './layoutModel.ts';
 import { LayoutStage } from './LayoutStage.tsx';
 import { ZoneInspector } from './ZoneInspector.tsx';
 
@@ -42,7 +42,11 @@ export function LayoutEditor() {
   );
 
   const save = async () => {
-    const parsed = virtualCanvasSchema.safeParse(canvas);
+    const maxLedCounts = new Map<string, number>();
+    for (const [key, zoneRef] of zones) {
+      maxLedCounts.set(key, zoneRef.zone.maxLedCount);
+    }
+    const parsed = virtualCanvasSchema(maxLedCounts).safeParse(canvas);
     if (!parsed.success) {
       toast.error(`Cannot save the layout: ${firstError(toFieldErrors(parsed.error)) ?? 'it is invalid'}.`);
       return;
@@ -71,6 +75,35 @@ export function LayoutEditor() {
       x: roundTo(selected.x + nudge[0] * step, 2),
       y: roundTo(selected.y + nudge[1] * step, 2),
     });
+  };
+
+  const addSelectedSegment = () => {
+    if (!selected) {
+      return;
+    }
+    const zone = zones.get(zoneKey(selected.deviceId, selected.zoneId))?.zone;
+    if (!zone?.isResizable) {
+      return;
+    }
+    const result = addSegment(canvas, placementKey(selected), zone.ledCount, zone.maxLedCount);
+    if (!result) {
+      toast.error('This header has no free LEDs to split off.');
+      return;
+    }
+    setDraft(result.canvas);
+    setSelectedKey(result.selectKey);
+  };
+
+  const removeSelectedSegment = () => {
+    if (!selected) {
+      return;
+    }
+    const result = removeSegment(canvas, placementKey(selected));
+    if (!result) {
+      return;
+    }
+    setDraft(result.canvas);
+    setSelectedKey(result.selectKey);
   };
 
   return (
@@ -122,6 +155,8 @@ export function LayoutEditor() {
           selected={selected}
           onSelect={setSelectedKey}
           onChange={changePlacement}
+          onAddSegment={addSelectedSegment}
+          onRemoveSegment={removeSelectedSegment}
         />
       </div>
     </Card>

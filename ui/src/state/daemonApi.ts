@@ -1,4 +1,5 @@
 import type {
+  DeviceColorCorrection,
   EffectSettings,
   FanCurve,
   LcdSettings,
@@ -20,6 +21,8 @@ export interface DaemonApi {
   upsertFanCurve: (curve: FanCurve) => Promise<SystemStateDto | null>;
   removeFanCurve: (curveId: string) => Promise<SystemStateDto | null>;
   updateLcd: (lcd: LcdSettings) => Promise<SystemStateDto | null>;
+  upsertColorCorrection: (correction: DeviceColorCorrection) => Promise<SystemStateDto | null>;
+  removeColorCorrection: (deviceId: string) => Promise<SystemStateDto | null>;
   rescanDevices: () => Promise<SystemStateDto | null>;
   setPreview: (channel: PreviewChannel, enabled: boolean) => Promise<void>;
 }
@@ -47,6 +50,8 @@ export function createDaemonApi(client: DaemonClient, sink: DaemonApiSink, toast
     upsertFanCurve: (curve) => mutate(() => client.invoke('UpsertFanCurve', curve)),
     removeFanCurve: (curveId) => mutate(() => client.invoke('RemoveFanCurve', curveId)),
     updateLcd: (lcd) => mutate(() => client.invoke('UpdateLcd', lcd)),
+    upsertColorCorrection: (correction) => mutate(() => client.invoke('UpsertColorCorrection', correction)),
+    removeColorCorrection: (deviceId) => mutate(() => client.invoke('RemoveColorCorrection', deviceId)),
     rescanDevices: () => mutate(() => client.invoke('RescanDevices')),
     setPreview: async (channel, enabled) => {
       if (!enabled) {

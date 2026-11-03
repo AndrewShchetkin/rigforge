@@ -70,6 +70,16 @@ public static class ApiEndpoints
             .WithName("RemoveFanCurve")
             .WithSummary("Removes a fan curve; the channel returns to firmware/BIOS control.");
 
+        api.MapPut("/profile/color-corrections/{deviceId}", (string deviceId, DeviceColorCorrection correction, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.UpsertColorCorrectionAsync(correction with { DeviceId = deviceId }, ct)))
+            .WithName("UpsertColorCorrection")
+            .WithSummary("Creates or replaces the gamma and white balance of one device.");
+
+        api.MapDelete("/profile/color-corrections/{deviceId}", (string deviceId, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.RemoveColorCorrectionAsync(deviceId, ct)))
+            .WithName("RemoveColorCorrection")
+            .WithSummary("Removes a device color correction; the device returns to neutral gamma and white balance.");
+
         return app;
     }
 

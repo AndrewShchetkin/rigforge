@@ -1,11 +1,11 @@
 import type Konva from 'konva';
-import { memo, useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Layer, Rect, Shape, Stage, Transformer } from 'react-konva';
 import type { VirtualCanvas } from '../../api/contracts.ts';
 import { clamp } from '../../lib/math.ts';
 import { useElementWidth } from '../../lib/useElementWidth.ts';
-import { placementKey, type ZoneRef } from '../../lib/zones.ts';
-import { GRID_STEP, ROTATION_SNAPS, type PlacementPatch } from './layoutModel.ts';
+import { placementKey, zoneKey, type ZoneRef } from '../../lib/zones.ts';
+import { GRID_STEP, ROTATION_SNAPS, segmentLedOffsets, type PlacementPatch } from './layoutModel.ts';
 import { ZoneNode } from './ZoneNode.tsx';
 
 const MIN_BOX_PX = 8;
@@ -56,6 +56,7 @@ export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKe
   const scale = ready ? containerWidth / canvas.width : 1;
   const stageHeight = Math.round(canvas.height * scale);
   const selectedPresent = canvas.placements.some((placement) => placementKey(placement) === selectedKey);
+  const ledOffsets = useMemo(() => segmentLedOffsets(canvas.placements), [canvas.placements]);
 
   const registerNode = useCallback((key: string, node: Konva.Group | null) => {
     if (node) {
@@ -104,15 +105,18 @@ export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKe
           <Layer>
             {canvas.placements.map((placement) => {
               const key = placementKey(placement);
+              const previewKey = zoneKey(placement.deviceId, placement.zoneId);
               return (
                 <ZoneNode
                   key={key}
                   zoneKey={key}
+                  previewKey={previewKey}
                   placement={placement}
-                  zone={zones.get(key)?.zone}
+                  zone={zones.get(previewKey)?.zone}
                   selected={key === selectedKey}
                   scale={scale}
                   dragBound={dragBound}
+                  ledOffset={ledOffsets.get(key) ?? 0}
                   onSelect={onSelect}
                   onChange={onChange}
                   onRegister={registerNode}

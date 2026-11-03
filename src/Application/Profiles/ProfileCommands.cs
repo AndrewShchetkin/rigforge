@@ -21,4 +21,15 @@ public static class ProfileCommands
     /// <summary>Removing a curve hands its channel back to firmware/BIOS control on the next cooling tick.</summary>
     public static Task<ProfileUpdateResult> RemoveFanCurveAsync(this ProfileService profiles, string curveId, CancellationToken cancellationToken) =>
         profiles.UpdateAsync(p => p with { FanCurves = p.FanCurves.Where(c => c.Id != curveId).ToArray() }, cancellationToken);
+
+    /// <summary>Adds the correction or replaces the one for the same device.</summary>
+    public static Task<ProfileUpdateResult> UpsertColorCorrectionAsync(this ProfileService profiles, DeviceColorCorrection correction, CancellationToken cancellationToken) =>
+        profiles.UpdateAsync(
+            p => p with { ColorCorrections = [.. p.ColorCorrections.Where(c => c.DeviceId != correction.DeviceId), correction] },
+            cancellationToken);
+
+    public static Task<ProfileUpdateResult> RemoveColorCorrectionAsync(this ProfileService profiles, string deviceId, CancellationToken cancellationToken) =>
+        profiles.UpdateAsync(
+            p => p with { ColorCorrections = p.ColorCorrections.Where(c => c.DeviceId != deviceId).ToArray() },
+            cancellationToken);
 }

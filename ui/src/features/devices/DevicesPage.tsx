@@ -12,7 +12,7 @@ function countDevices(count: number): string {
 }
 
 export function DevicesPage() {
-  const { devices } = useSystem();
+  const { devices, profile } = useSystem();
   const api = useDaemonApi();
   const toast = useToast();
   const [scanning, setScanning] = useState(false);
@@ -42,7 +42,11 @@ export function DevicesPage() {
       ) : (
         <div className="grid gap-6 xl:grid-cols-2">
           {devices.map((device) => (
-            <DeviceCard key={device.id} device={device} />
+            <DeviceCard
+              key={device.id}
+              device={device}
+              colorCorrection={(profile.colorCorrections ?? []).find((correction) => correction.deviceId === device.id)}
+            />
           ))}
         </div>
       )}

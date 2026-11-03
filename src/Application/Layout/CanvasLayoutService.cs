@@ -16,6 +16,8 @@ public sealed class CanvasLayoutService(DeviceManager devices, ProfileService pr
 
     public static VirtualCanvas BuildEffectiveCanvas(VirtualCanvas canvas, IReadOnlyList<IRgbDevice> rgbDevices)
     {
+        // A zone counts as placed when any of its segments is already on the canvas, so a split ARGB
+        // chain is not given an extra automatic box.
         var placed = canvas.Placements.Select(p => (p.DeviceId, p.ZoneId)).ToHashSet();
         var unplaced = rgbDevices
             .SelectMany(device => device.Zones.Select(zone => (Device: device, Zone: zone)))
@@ -67,17 +69,20 @@ public sealed class CanvasLayoutService(DeviceManager devices, ProfileService pr
         var overrides = profiles.Current.Canvas.Placements
             .Where(p => p.LedCount is > 0)
             .GroupBy(p => (p.DeviceId, p.ZoneId))
-            .ToDictionary(g => g.Key, g => g.First().LedCount!.Value);
+            .ToDictionary(g => g.Key, g => g.Sum(p => p.LedCount!.Value));
 
         foreach (var device in devices.RgbDevices)
         {
             foreach (var zone in device.Zones)
             {
                 if (zone.IsResizable
-                    && overrides.TryGetValue((device.Id, zone.Id), out var count)
-                    && count != zone.LedCount)
+                    && overrides.TryGetValue((device.Id, zone.Id), out var count))
                 {
-                    device.TryResizeZone(zone.Id, count);
+                    var clamped = zone.MaxLedCount > 0 ? Math.Clamp(count, 1, zone.MaxLedCount) : count;
+                    if (clamped != zone.LedCount)
+                    {
+                        device.TryResizeZone(zone.Id, clamped);
+                    }
                 }
             }
         }

@@ -5,7 +5,7 @@
 
 // ---------- Enums ----------
 export type DeviceCapability = 'Rgb' | 'FanControl' | 'Sensors' | 'Lcd';
-export type LedTopology = 'Point' | 'Linear' | 'Ring' | 'Composite';
+export type LedTopology = 'Point' | 'Linear' | 'Ring' | 'Composite' | 'Matrix2D';
 export type FanChannelKind = 'Fan' | 'Pump';
 export type SensorKind = 'Temperature' | 'Load' | 'FanSpeed' | 'Duty' | 'Power' | 'Clock' | 'Data' | 'Voltage';
 export type SensorRole =
@@ -153,9 +153,19 @@ export interface ZonePlacement {
   enabled: boolean;
   /**
    * Integer, only for resizable zones (ARGB headers), 1..zone.maxLedCount. After UpdateCanvas the daemon resizes the
-   * zone, regenerates `RgbZoneDto.leds` with the topology's default layout and broadcasts StateChanged.
+   * zone to the sum of its segments, regenerates the physical LED buffer and broadcasts StateChanged.
    */
   ledCount: number | null;
+  /** Set when this box is one part of a physical ARGB chain. Several parts share `deviceId` and `zoneId`. */
+  segmentId?: string | null;
+  /** User-facing segment name, for example "Fan 1". */
+  name?: string | null;
+  /** Layout override. Null keeps the hardware topology. */
+  topology?: LedTopology | null;
+  /** Column count for a Matrix2D override. Defaults to 8. */
+  matrixColumns?: number | null;
+  /** Reverses odd matrix rows. */
+  serpentine?: boolean;
 }
 
 export interface VirtualCanvas {
@@ -206,12 +216,22 @@ export interface LcdSettings {
   framesPerSecond: number;
 }
 
+export interface DeviceColorCorrection {
+  deviceId: string;
+  /** 0.5..3. 1 is linear. */
+  gamma: number;
+  /** Per-channel gain, #RRGGBB. #FFFFFF is neutral. */
+  whiteBalance: string;
+}
+
 export interface RigProfile {
   schemaVersion: number;
   canvas: VirtualCanvas;
   effect: EffectSettings;
   fanCurves: FanCurve[];
   lcd: LcdSettings;
+  /** Older daemons omit this. Treat a missing array as no corrections. */
+  colorCorrections?: DeviceColorCorrection[];
 }
 
 export interface SystemStateDto {
@@ -236,6 +256,8 @@ export interface DaemonHubMethods {
   UpsertFanCurve(curve: FanCurve): Promise<SystemStateDto>;
   RemoveFanCurve(curveId: string): Promise<SystemStateDto>;
   UpdateLcd(lcd: LcdSettings): Promise<SystemStateDto>;
+  UpsertColorCorrection(correction: DeviceColorCorrection): Promise<SystemStateDto>;
+  RemoveColorCorrection(deviceId: string): Promise<SystemStateDto>;
   RescanDevices(): Promise<SystemStateDto>;
   /** Opt-in to high-rate preview streams; only enable while the corresponding page is visible. */
   SetPreview(channel: PreviewChannel, enabled: boolean): Promise<void>;

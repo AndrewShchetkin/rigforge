@@ -5,8 +5,9 @@ export function zoneKey(deviceId: string, zoneId: string): string {
   return `${deviceId}/${zoneId}`;
 }
 
-export function placementKey(placement: Pick<ZonePlacement, 'deviceId' | 'zoneId'>): string {
-  return zoneKey(placement.deviceId, placement.zoneId);
+export function placementKey(placement: Pick<ZonePlacement, 'deviceId' | 'zoneId' | 'segmentId'>): string {
+  const zone = zoneKey(placement.deviceId, placement.zoneId);
+  return placement.segmentId ? `${zone}#${placement.segmentId}` : zone;
 }
 
 export interface ZoneRef {

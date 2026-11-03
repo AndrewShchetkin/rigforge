@@ -20,10 +20,24 @@ internal sealed class LedSamplePlan
         ushort W11,
         bool Enabled);
 
+    private readonly float _gamma;
+    private readonly byte _balanceR;
+    private readonly byte _balanceG;
+    private readonly byte _balanceB;
+    private readonly byte[] _lutR = new byte[256];
+    private readonly byte[] _lutG = new byte[256];
+    private readonly byte[] _lutB = new byte[256];
     private int _canvasWidth;
     private int _canvasHeight;
+    private float _lutBrightness = float.NaN;
 
-    private LedSamplePlan(IRgbDevice device, IReadOnlyList<RgbZone> zones, int ledCount, int canvasWidth, int canvasHeight)
+    private LedSamplePlan(
+        IRgbDevice device,
+        IReadOnlyList<RgbZone> zones,
+        int ledCount,
+        int canvasWidth,
+        int canvasHeight,
+        DeviceColorCorrection? colorCorrection)
     {
         Device = device;
         Zones = zones;
@@ -35,6 +49,11 @@ internal sealed class LedSamplePlan
         Colors = new RgbColor[ledCount];
         _canvasWidth = canvasWidth;
         _canvasHeight = canvasHeight;
+        _gamma = Math.Clamp(colorCorrection?.Gamma ?? 1f, 0.5f, 3f);
+        var balance = RgbColor.TryParse(colorCorrection?.WhiteBalance, out var parsed) ? parsed : RgbColor.White;
+        _balanceR = balance.R;
+        _balanceG = balance.G;
+        _balanceB = balance.B;
     }
 
     public IRgbDevice Device { get; }
@@ -63,36 +82,112 @@ internal sealed class LedSamplePlan
         IRgbDevice device,
         IReadOnlyDictionary<(string DeviceId, string ZoneId), ZonePlacement> placements,
         int canvasWidth = 320,
-        int canvasHeight = 180)
+        int canvasHeight = 180,
+        DeviceColorCorrection? colorCorrection = null) =>
+        Build(device, placements.Values.ToArray(), canvasWidth, canvasHeight, colorCorrection);
+
+    /// <summary>
+    /// Builds one sample plan. Placements of the same zone are consumed in list order, which is the
+    /// physical ARGB chain order. A single placement without a topology or size override keeps the
+    /// hardware LED positions; segments and matrix overrides are generated and concatenated.
+    /// When a segment's LED count does not fit, only the prefix of that full layout is copied so the
+    /// LEDs that remain keep the positions they would have in the complete strip or matrix. LEDs past
+    /// a short chain stay disabled, and the next zone is not shifted.
+    /// </summary>
+    public static LedSamplePlan Build(
+        IRgbDevice device,
+        IReadOnlyList<ZonePlacement> placements,
+        int canvasWidth = 320,
+        int canvasHeight = 180,
+        DeviceColorCorrection? colorCorrection = null)
     {
         var zones = device.Zones;
-        var plan = new LedSamplePlan(device, zones, zones.Sum(z => z.LedCount), canvasWidth, canvasHeight);
+        var plan = new LedSamplePlan(device, zones, zones.Sum(z => z.LedCount), canvasWidth, canvasHeight, colorCorrection);
 
         var index = 0;
         foreach (var zone in zones)
         {
-            placements.TryGetValue((device.Id, zone.Id), out var placement);
-            var (sin, cos) = placement is null ? (0f, 1f) : MathF.SinCos(placement.Rotation * MathF.PI / 180f);
-
-            foreach (var led in zone.Leds)
+            var zonePlacements = new List<ZonePlacement>();
+            foreach (var placement in placements)
             {
-                if (placement is not null)
+                if (string.Equals(placement.DeviceId, device.Id, StringComparison.Ordinal)
+                    && string.Equals(placement.ZoneId, zone.Id, StringComparison.Ordinal))
                 {
-                    // Rotate around the placement's top-left corner (Konva convention, y axis pointing down).
-                    var localX = led.X * placement.Width;
-                    var localY = led.Y * placement.Height;
-                    plan.X[index] = placement.X + localX * cos - localY * sin;
-                    plan.Y[index] = placement.Y + localX * sin + localY * cos;
+                    zonePlacements.Add(placement);
+                }
+            }
+
+            if (zonePlacements.Count == 0)
+            {
+                for (var i = 0; i < zone.LedCount; i++)
+                {
+                    plan.Points[index] = new LedPoint(0f, 0f, false);
+                    index++;
                 }
 
-                plan.Enabled[index] = placement is { Enabled: true };
-                plan.Points[index] = new LedPoint(plan.X[index], plan.Y[index], plan.Enabled[index]);
+                continue;
+            }
+
+            if (zonePlacements.Count == 1 && UsesHardwareLayout(zone, zonePlacements[0]))
+            {
+                WritePlacement(plan, zone.Leds, zonePlacements[0], ref index);
+                continue;
+            }
+
+            var zoneEnd = index + zone.LedCount;
+            foreach (var placement in zonePlacements)
+            {
+                if (index >= zoneEnd)
+                {
+                    break;
+                }
+
+                var requested = placement.LedCount ?? (zonePlacements.Count == 1 ? zone.LedCount : 0);
+                var local = LedLayouts.For(
+                    placement.Topology ?? zone.Topology,
+                    Math.Max(requested, 0),
+                    placement.MatrixColumns ?? 8,
+                    placement.Serpentine);
+                var remaining = zoneEnd - index;
+                if (local.Count > remaining)
+                {
+                    // Keep the first LEDs of the full shape. A shorter regenerated layout would
+                    // stretch those LEDs across the whole placement box.
+                    local = local.Take(remaining).ToArray();
+                }
+
+                WritePlacement(plan, local, placement, ref index);
+            }
+
+            while (index < zoneEnd)
+            {
+                plan.Points[index] = new LedPoint(0f, 0f, false);
                 index++;
             }
         }
 
         plan.RebuildTaps(canvasWidth, canvasHeight);
         return plan;
+    }
+
+    /// <summary>True when the hardware LED positions already describe this single placement.</summary>
+    private static bool UsesHardwareLayout(RgbZone zone, ZonePlacement placement) =>
+        placement.Topology is null && (placement.LedCount is null || placement.LedCount == zone.LedCount);
+
+    private static void WritePlacement(LedSamplePlan plan, IReadOnlyList<LedPosition> leds, ZonePlacement placement, ref int index)
+    {
+        var (sin, cos) = MathF.SinCos(placement.Rotation * MathF.PI / 180f);
+        foreach (var led in leds)
+        {
+            // Rotate around the placement's top-left corner (Konva convention, y axis pointing down).
+            var localX = led.X * placement.Width;
+            var localY = led.Y * placement.Height;
+            plan.X[index] = placement.X + localX * cos - localY * sin;
+            plan.Y[index] = placement.Y + localX * sin + localY * cos;
+            plan.Enabled[index] = placement.Enabled;
+            plan.Points[index] = new LedPoint(plan.X[index], plan.Y[index], plan.Enabled[index]);
+            index++;
+        }
     }
 
     /// <summary>Samples the rendered canvas (RGBA8888, opaque) for every LED and applies the brightness.</summary>
@@ -103,6 +198,7 @@ internal sealed class LedSamplePlan
             RebuildTaps(width, height);
         }
 
+        EnsureLut(brightness);
         var taps = Taps;
         var colors = Colors;
         for (var i = 0; i < colors.Length; i++)
@@ -117,7 +213,7 @@ internal sealed class LedSamplePlan
             var r = (byte)((rgba[tap.P00] * tap.W00 + rgba[tap.P10] * tap.W10 + rgba[tap.P01] * tap.W01 + rgba[tap.P11] * tap.W11 + 128) >> 8);
             var g = (byte)((rgba[tap.P00 + 1] * tap.W00 + rgba[tap.P10 + 1] * tap.W10 + rgba[tap.P01 + 1] * tap.W01 + rgba[tap.P11 + 1] * tap.W11 + 128) >> 8);
             var b = (byte)((rgba[tap.P00 + 2] * tap.W00 + rgba[tap.P10 + 2] * tap.W10 + rgba[tap.P01 + 2] * tap.W01 + rgba[tap.P11 + 2] * tap.W11 + 128) >> 8);
-            colors[i] = new RgbColor(r, g, b).Scale(brightness);
+            colors[i] = new RgbColor(_lutR[r], _lutG[g], _lutB[b]);
         }
     }
 
@@ -127,13 +223,62 @@ internal sealed class LedSamplePlan
     /// </summary>
     public void ApplyDirectBrightness(float brightness)
     {
+        EnsureLut(brightness);
         var points = Points;
         var colors = Colors;
         for (var i = 0; i < colors.Length; i++)
         {
-            colors[i] = points[i].Enabled ? colors[i].Scale(brightness) : RgbColor.Black;
+            if (!points[i].Enabled)
+            {
+                colors[i] = RgbColor.Black;
+                continue;
+            }
+
+            var color = colors[i];
+            colors[i] = new RgbColor(_lutR[color.R], _lutG[color.G], _lutB[color.B]);
         }
     }
+
+    /// <summary>
+    /// Fills the three 256-entry tables for <paramref name="brightness"/>. Identity gamma and white balance
+    /// match <see cref="RgbColor.Scale"/>; otherwise each channel is <c>pow(i/255*brightness, gamma) * whiteBalance</c>.
+    /// Rebuilding writes into the existing arrays, so a steady brightness allocates nothing per frame.
+    /// </summary>
+    private void EnsureLut(float brightness)
+    {
+        brightness = Math.Clamp(brightness, 0f, 1f);
+        if (brightness == _lutBrightness)
+        {
+            return;
+        }
+
+        _lutBrightness = brightness;
+        if (_gamma == 1f && _balanceR == 255 && _balanceG == 255 && _balanceB == 255)
+        {
+            for (var i = 0; i < 256; i++)
+            {
+                var scaled = (byte)(i * brightness + 0.5f);
+                _lutR[i] = scaled;
+                _lutG[i] = scaled;
+                _lutB[i] = scaled;
+            }
+
+            return;
+        }
+
+        var gainR = _balanceR / 255f;
+        var gainG = _balanceG / 255f;
+        var gainB = _balanceB / 255f;
+        for (var i = 0; i < 256; i++)
+        {
+            var corrected = MathF.Pow(i / 255f * brightness, _gamma);
+            _lutR[i] = ToByte(corrected * gainR);
+            _lutG[i] = ToByte(corrected * gainG);
+            _lutB[i] = ToByte(corrected * gainB);
+        }
+    }
+
+    private static byte ToByte(float channel) => (byte)Math.Clamp(channel * 255f + 0.5f, 0f, 255f);
 
     internal static RgbColor SampleBilinear(ReadOnlySpan<byte> rgba, int width, int height, float x, float y)
     {

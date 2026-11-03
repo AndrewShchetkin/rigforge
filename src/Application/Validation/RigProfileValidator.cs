@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentValidation;
+using FluentValidation.Results;
 using RigForge.Application.Effects;
 using RigForge.Core.Models;
 
@@ -24,6 +25,41 @@ public sealed class RigProfileValidator : AbstractValidator<RigProfile>
             .WithMessage("A channel can only be driven by one fan curve.");
 
         RuleForEach(p => p.FanCurves).SetValidator(new FanCurveValidator());
+
+        RuleFor(p => p.ColorCorrections)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
+            .Must(corrections => corrections is not null && corrections.Count <= 64)
+            .WithMessage("At most 64 color corrections are supported.")
+            .Must(HasOneCorrectionPerDevice)
+            .WithMessage("A device can only have one color correction.");
+
+        RuleForEach(p => p.ColorCorrections).NotNull().SetValidator(new DeviceColorCorrectionValidator());
+    }
+
+    /// <summary>Null list fails validation. Null entries are skipped so they cannot throw; the per-item rule rejects them.</summary>
+    private static bool HasOneCorrectionPerDevice(IReadOnlyList<DeviceColorCorrection> corrections)
+    {
+        if (corrections is null)
+        {
+            return false;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var correction in corrections)
+        {
+            if (correction?.DeviceId is not string deviceId)
+            {
+                continue;
+            }
+
+            if (!seen.Add(deviceId))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
@@ -72,8 +108,9 @@ public sealed class VirtualCanvasValidator : AbstractValidator<VirtualCanvas>
             .Cascade(CascadeMode.Stop)
             .NotNull()
             .Must(p => p.Count <= 512).WithMessage("At most 512 zone placements are supported.")
-            .Must(p => p.Select(x => (x.DeviceId, x.ZoneId)).Distinct().Count() == p.Count)
-            .WithMessage("Each zone can only be placed once.");
+            .Must(p => p.Select(x => (x.DeviceId, x.ZoneId, x.SegmentId ?? string.Empty)).Distinct().Count() == p.Count)
+            .WithMessage("Each zone segment can only be placed once.")
+            .Custom(ValidateSegments);
 
         RuleForEach(c => c.Placements).ChildRules(placement =>
         {
@@ -85,7 +122,49 @@ public sealed class VirtualCanvasValidator : AbstractValidator<VirtualCanvas>
             placement.RuleFor(p => p.Y).InclusiveBetween(-4000f, 4000f);
             placement.RuleFor(p => p.Rotation).InclusiveBetween(-360f, 360f);
             placement.RuleFor(p => p.LedCount).InclusiveBetween(1, 1000).When(p => p.LedCount is not null);
+            placement.RuleFor(p => p.SegmentId).MaximumLength(64);
+            placement.RuleFor(p => p.Name).MaximumLength(64);
+            placement.RuleFor(p => p.Topology).IsInEnum().When(p => p.Topology is not null);
+            placement.RuleFor(p => p.MatrixColumns).InclusiveBetween(1, 256).When(p => p.MatrixColumns is not null);
         });
+    }
+
+    private static void ValidateSegments(IReadOnlyList<ZonePlacement> placements, ValidationContext<VirtualCanvas> context)
+    {
+        foreach (var group in placements.GroupBy(p => (p.DeviceId, p.ZoneId)))
+        {
+            if (group.Count() <= 1)
+            {
+                continue;
+            }
+
+            var sum = 0;
+            foreach (var placement in group)
+            {
+                if (string.IsNullOrWhiteSpace(placement.SegmentId))
+                {
+                    context.AddFailure(
+                        nameof(VirtualCanvas.Placements),
+                        $"Segmented zone '{placement.DeviceId}/{placement.ZoneId}' needs a segment id on every part.");
+                }
+
+                if (placement.LedCount is null or < 1)
+                {
+                    context.AddFailure(
+                        nameof(VirtualCanvas.Placements),
+                        $"Segment '{placement.SegmentId}' of '{placement.DeviceId}/{placement.ZoneId}' needs a LED count.");
+                }
+
+                sum += placement.LedCount ?? 0;
+            }
+
+            if (sum > 1000)
+            {
+                context.AddFailure(
+                    nameof(VirtualCanvas.Placements),
+                    $"Zone '{group.Key.DeviceId}/{group.Key.ZoneId}' cannot have more than 1000 LEDs.");
+            }
+        }
     }
 }
 
@@ -189,6 +268,27 @@ public sealed class EffectSettingsValidator : AbstractValidator<EffectSettings>
                 break;
             }
         }
+    }
+}
+
+public sealed class DeviceColorCorrectionValidator : AbstractValidator<DeviceColorCorrection>
+{
+    public DeviceColorCorrectionValidator()
+    {
+        RuleFor(c => c.DeviceId).NotEmpty().MaximumLength(256);
+        RuleFor(c => c.Gamma).InclusiveBetween(0.5f, 3f);
+        RuleFor(c => c.WhiteBalance).Must(c => RgbColor.TryParse(c, out _)).WithMessage("White balance must be #RRGGBB.");
+    }
+
+    protected override bool PreValidate(ValidationContext<DeviceColorCorrection> context, ValidationResult result)
+    {
+        if (context.InstanceToValidate is not null)
+        {
+            return true;
+        }
+
+        result.Errors.Add(new ValidationFailure(nameof(DeviceColorCorrection), "A color correction entry cannot be null."));
+        return false;
     }
 }
 

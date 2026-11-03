@@ -13,6 +13,7 @@ using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
 using RigForge.Host.Daemon.Hubs;
+using RigForge.Infrastructure.CrossPlatform.Persistence;
 using RigForge.Infrastructure.CrossPlatform.Platform;
 using RigForge.Infrastructure.Linux.Hardware;
 
@@ -37,6 +38,111 @@ public sealed class ProfileTests
 
         Assert.Contains(result.Errors, e => e.PropertyName == "Effect.EffectId");
         Assert.Contains(result.Errors, e => e.PropertyName == "Effect.Brightness");
+    }
+
+    [Fact]
+    public void Split_zone_requires_segment_ids_and_led_counts()
+    {
+        var missing = new RigProfile
+        {
+            Canvas = new VirtualCanvas
+            {
+                Placements =
+                [
+                    new ZonePlacement { DeviceId = "dev", ZoneId = "argb1", Width = 10, Height = 10 },
+                    new ZonePlacement { DeviceId = "dev", ZoneId = "argb1", X = 20, Width = 10, Height = 10 },
+                ],
+            },
+        };
+        var duplicate = _validator.Validate(missing);
+        Assert.False(duplicate.IsValid);
+        Assert.Contains(duplicate.Errors, e => e.ErrorMessage.Contains("placed once", StringComparison.Ordinal));
+
+        var missingId = new RigProfile
+        {
+            Canvas = new VirtualCanvas
+            {
+                Placements =
+                [
+                    new ZonePlacement { DeviceId = "dev", ZoneId = "argb1", SegmentId = "a", Width = 10, Height = 10, LedCount = 8 },
+                    new ZonePlacement { DeviceId = "dev", ZoneId = "argb1", SegmentId = " ", X = 20, Width = 10, Height = 10 },
+                ],
+            },
+        };
+        var segmentErrors = _validator.Validate(missingId).Errors;
+        Assert.Contains(segmentErrors, e => e.ErrorMessage.Contains("needs a segment id", StringComparison.Ordinal));
+        Assert.Contains(segmentErrors, e => e.ErrorMessage.Contains("needs a LED count", StringComparison.Ordinal));
+
+        var split = new RigProfile
+        {
+            Canvas = new VirtualCanvas
+            {
+                Placements =
+                [
+                    new ZonePlacement { DeviceId = "dev", ZoneId = "argb1", SegmentId = "a", Width = 10, Height = 10, LedCount = 8, Topology = LedTopology.Linear },
+                    new ZonePlacement { DeviceId = "dev", ZoneId = "argb1", SegmentId = "b", X = 20, Width = 10, Height = 10, LedCount = 16, Topology = LedTopology.Matrix2D, MatrixColumns = 4, Serpentine = true },
+                ],
+            },
+        };
+        Assert.True(_validator.Validate(split).IsValid);
+
+        var tooMany = split with
+        {
+            Canvas = split.Canvas with
+            {
+                Placements =
+                [
+                    split.Canvas.Placements[0] with { LedCount = 600 },
+                    split.Canvas.Placements[1] with { LedCount = 600 },
+                ],
+            },
+        };
+        Assert.Contains(_validator.Validate(tooMany).Errors, e => e.ErrorMessage.Contains("1000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Color_corrections_require_a_unique_device_and_a_valid_gamma()
+    {
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorCorrections = [new DeviceColorCorrection { DeviceId = "dev", Gamma = 0.1f }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorCorrections = [new DeviceColorCorrection { DeviceId = "dev", WhiteBalance = "red" }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorCorrections =
+            [
+                new DeviceColorCorrection { DeviceId = "dev" },
+                new DeviceColorCorrection { DeviceId = "dev", Gamma = 2f },
+            ],
+        }).IsValid);
+        Assert.True(_validator.Validate(new RigProfile
+        {
+            ColorCorrections = [new DeviceColorCorrection { DeviceId = "dev", Gamma = 2.2f, WhiteBalance = "#FFEECC" }],
+        }).IsValid);
+
+        Assert.False(_validator.Validate(new RigProfile { ColorCorrections = null! }).IsValid);
+    }
+
+    [Fact]
+    public void Null_color_correction_entry_fails_validation_without_throwing()
+    {
+        const string json = """
+            {
+              "colorCorrections": [ null, { "deviceId": "dev", "gamma": 2.2, "whiteBalance": "#FFEECC" } ]
+            }
+            """;
+
+        var loaded = JsonSerializer.Deserialize(json, ProfileJsonContext.Default.RigProfile);
+        var profile = new RigProfile { ColorCorrections = loaded!.ColorCorrections };
+
+        var result = _validator.Validate(profile);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.PropertyName.Contains("ColorCorrections", StringComparison.Ordinal));
     }
 
     [Fact]

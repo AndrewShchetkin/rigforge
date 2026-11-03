@@ -33,24 +33,77 @@ const zonePlacementSchema = z.object({
   rotation: z.number().min(-360).max(360),
   enabled: z.boolean(),
   ledCount: z.int().min(1, 'At least 1 LED').nullable(),
+  segmentId: z.string().max(64).nullable().optional(),
+  name: z.string().max(64).nullable().optional(),
+  topology: z.enum(LED_TOPOLOGIES).nullable().optional(),
+  matrixColumns: z.int().min(1).max(256).nullable().optional(),
+  serpentine: z.boolean().optional(),
 });
 
-export const virtualCanvasSchema = z
-  .object({
-    width: z.int().positive(),
-    height: z.int().positive(),
-    placements: z.array(zonePlacementSchema),
-  })
-  .superRefine((canvas, ctx) => {
-    const seen = new Set<string>();
-    canvas.placements.forEach((placement, index) => {
-      const key = `${placement.deviceId}/${placement.zoneId}`;
-      if (seen.has(key)) {
-        ctx.addIssue({ code: 'custom', path: ['placements', index], message: `Zone ${key} is placed twice` });
+/** Whitespace-only ids are missing, matching the daemon's IsNullOrWhiteSpace check. */
+function isMissingSegmentId(segmentId: string | null | undefined): boolean {
+  return segmentId === undefined || segmentId === null || segmentId.trim() === '';
+}
+
+/**
+ * Validates a canvas before UpdateCanvas. `maxLedCounts` is keyed by `deviceId/zoneId`.
+ * When that zone is in the map, the sum of its LED counts cannot exceed the header.
+ * Splits still cannot exceed the daemon's 1000 cap.
+ */
+export function virtualCanvasSchema(maxLedCounts?: ReadonlyMap<string, number>) {
+  return z
+    .object({
+      width: z.int().positive(),
+      height: z.int().positive(),
+      placements: z.array(zonePlacementSchema),
+    })
+    .superRefine((canvas, ctx) => {
+      const seen = new Set<string>();
+      const groups = new Map<string, number[]>();
+      canvas.placements.forEach((placement, index) => {
+        const key = placement.segmentId
+          ? `${placement.deviceId}/${placement.zoneId}#${placement.segmentId}`
+          : `${placement.deviceId}/${placement.zoneId}`;
+        if (seen.has(key)) {
+          ctx.addIssue({ code: 'custom', path: ['placements', index], message: `Zone ${key} is placed twice` });
+        }
+        seen.add(key);
+        const zone = `${placement.deviceId}/${placement.zoneId}`;
+        const indexes = groups.get(zone) ?? [];
+        indexes.push(index);
+        groups.set(zone, indexes);
+      });
+
+      for (const [zone, indexes] of groups) {
+        const split = indexes.length > 1;
+        let sum = 0;
+        for (const index of indexes) {
+          const placement = canvas.placements[index];
+          if (!placement) {
+            continue;
+          }
+          if (split && isMissingSegmentId(placement.segmentId)) {
+            ctx.addIssue({ code: 'custom', path: ['placements', index, 'segmentId'], message: 'Each part of a split zone needs a segment id' });
+          }
+          if (split && placement.ledCount === null) {
+            ctx.addIssue({ code: 'custom', path: ['placements', index, 'ledCount'], message: 'Each segment needs a LED count' });
+          }
+          sum += placement.ledCount ?? 0;
+        }
+        const first = indexes[0];
+        if (first === undefined) {
+          continue;
+        }
+        const maxLedCount = maxLedCounts?.get(zone);
+        if (maxLedCount !== undefined && sum > maxLedCount) {
+          ctx.addIssue({ code: 'custom', path: ['placements', first, 'ledCount'], message: `A zone can have at most ${maxLedCount} LEDs` });
+        }
+        if (split && sum > 1000) {
+          ctx.addIssue({ code: 'custom', path: ['placements', first, 'ledCount'], message: 'A zone can have at most 1000 LEDs' });
+        }
       }
-      seen.add(key);
-    });
-  }) satisfies z.ZodType<VirtualCanvas>;
+    }) satisfies z.ZodType<VirtualCanvas>;
+}
 
 const effectParameterValueSchema = z.union([z.array(z.string()), z.number(), z.string()]);
 
@@ -235,6 +288,7 @@ const systemStateSchema = z.looseObject({
     effect: z.looseObject({ effectId: str, parameters: z.record(str, z.unknown()) }),
     fanCurves: z.array(z.looseObject({ id: str, deviceId: str, channelId: str, points: z.array(z.looseObject({})) })),
     lcd: z.looseObject({ mode: z.enum(LCD_MODES), sensorSelectors: z.array(str) }),
+    colorCorrections: z.array(z.looseObject({ deviceId: str, gamma: num, whiteBalance: str })).optional(),
   }),
   effectiveCanvas: canvasShape,
   effects: z.array(

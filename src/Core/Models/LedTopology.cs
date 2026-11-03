@@ -7,4 +7,7 @@ public enum LedTopology
     Linear,
     Ring,
     Composite,
+
+    /// <summary>A row-major 2D grid. Odd rows run right-to-left when the placement is serpentine.</summary>
+    Matrix2D,
 }

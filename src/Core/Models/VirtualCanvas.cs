@@ -38,4 +38,22 @@ public sealed record ZonePlacement
 
     /// <summary>LED count override for zones whose size the hardware cannot detect (ARGB headers).</summary>
     public int? LedCount { get; init; }
+
+    /// <summary>
+    /// Distinguishes one part of a physical zone (an ARGB chain) from its siblings.
+    /// Null when the zone is a single placement.
+    /// </summary>
+    public string? SegmentId { get; init; }
+
+    /// <summary>User-facing name of a segment, for example "Fan 1" or "CPU block".</summary>
+    public string? Name { get; init; }
+
+    /// <summary>Layout override for this placement. Null keeps the hardware zone's own topology.</summary>
+    public LedTopology? Topology { get; init; }
+
+    /// <summary>Column count used when <see cref="Topology"/> is <see cref="LedTopology.Matrix2D"/>. Defaults to 8.</summary>
+    public int? MatrixColumns { get; init; }
+
+    /// <summary>Reverses odd matrix rows so a zigzag strip matches the grid.</summary>
+    public bool Serpentine { get; init; }
 }

@@ -19,7 +19,10 @@ function setCursor(event: Konva.KonvaEventObject<MouseEvent>, cursor: string) {
 }
 
 interface ZoneNodeProps {
+  /** Placement key, including the segment id when the zone is split. */
   zoneKey: string;
+  /** Physical zone key used by the LED preview stream. */
+  previewKey: string;
   placement: ZonePlacement;
   /** Undefined when the placement refers to a zone the daemon does not currently report. */
   zone: RgbZoneDto | undefined;
@@ -27,6 +30,7 @@ interface ZoneNodeProps {
   /** Stage pixels per canvas unit. */
   scale: number;
   dragBound: (position: Konva.Vector2d) => Konva.Vector2d;
+  ledOffset: number;
   onSelect: (key: string) => void;
   onChange: (key: string, patch: PlacementPatch) => void;
   onRegister: (key: string, node: Konva.Group | null) => void;
@@ -35,18 +39,23 @@ interface ZoneNodeProps {
 /** One placed zone: dashed box at (x, y) rotated around its top-left corner, its name and its LEDs. */
 export const ZoneNode = memo(function ZoneNode({
   zoneKey,
+  previewKey,
   placement,
   zone,
   selected,
   scale,
   dragBound,
+  ledOffset,
   onSelect,
   onChange,
   onRegister,
 }: ZoneNodeProps) {
-  const { x, y, width, height, rotation, enabled, ledCount } = placement;
+  const { x, y, width, height, rotation, enabled, ledCount, name, topology, matrixColumns, serpentine } = placement;
   const register = useCallback((node: Konva.Group | null) => onRegister(zoneKey, node), [zoneKey, onRegister]);
-  const leds = useMemo(() => (zone ? zoneLeds(zone, ledCount) : []), [zone, ledCount]);
+  const leds = useMemo(
+    () => (zone ? zoneLeds(zone, { ledCount, topology, matrixColumns, serpentine }) : []),
+    [zone, ledCount, topology, matrixColumns, serpentine],
+  );
   const padding = PADDING_PX / scale;
 
   const handleDragEnd = (event: Konva.KonvaEventObject<DragEvent>) => {
@@ -98,7 +107,7 @@ export const ZoneNode = memo(function ZoneNode({
         x={padding}
         y={padding}
         width={Math.max(0, width - 2 * padding)}
-        text={zone?.name ?? `${placement.zoneId} (not detected)`}
+        text={name || zone?.name || `${placement.zoneId} (not detected)`}
         fontSize={LABEL_PX / scale}
         fill={enabled ? '#e4e4e7' : '#71717a'}
         wrap="none"
@@ -106,7 +115,15 @@ export const ZoneNode = memo(function ZoneNode({
         listening={false}
       />
       {zone && (
-        <ZoneLeds zoneKey={zoneKey} leds={leds} width={width} height={height} scale={scale} dimmed={!enabled} />
+        <ZoneLeds
+          zoneKey={previewKey}
+          leds={leds}
+          ledOffset={ledOffset}
+          width={width}
+          height={height}
+          scale={scale}
+          dimmed={!enabled}
+        />
       )}
     </Group>
   );

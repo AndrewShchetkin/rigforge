@@ -62,6 +62,10 @@ public sealed partial class ProfileService(
             return;
         }
 
+        // Source-generated JSON leaves a missing colorCorrections array null. Treat that as empty
+        // so an older profile.json stays valid. An explicit null that skips this step still fails.
+        loaded = loaded.ColorCorrections is null ? loaded with { ColorCorrections = [] } : loaded;
+
         var validation = await validator.ValidateAsync(loaded, cancellationToken);
         if (!validation.IsValid)
         {
@@ -143,12 +147,26 @@ public sealed partial class ProfileService(
             }
         }
 
+        var keptCorrections = new List<DeviceColorCorrection>();
+        if (loaded.ColorCorrections is not null)
+        {
+            foreach (var correction in loaded.ColorCorrections)
+            {
+                if (correction is not null
+                    && (await validator.ValidateAsync(fallback with { ColorCorrections = [..keptCorrections, correction] }, cancellationToken)).IsValid)
+                {
+                    keptCorrections.Add(correction);
+                }
+            }
+        }
+
         return NormalizeProfile(fallback with
         {
             Canvas = canvas,
             Effect = effect,
             Lcd = lcd,
             FanCurves = keptCurves,
+            ColorCorrections = keptCorrections,
         });
     }
 

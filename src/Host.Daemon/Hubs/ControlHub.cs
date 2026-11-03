@@ -46,6 +46,12 @@ public sealed class ControlHub(
     public Task<SystemStateDto> RemoveFanCurve(string curveId) =>
         ApplyAsync(Required(curveId, nameof(curveId)), (p, id, ct) => p.RemoveFanCurveAsync(id, ct));
 
+    public Task<SystemStateDto> UpsertColorCorrection(DeviceColorCorrection correction) =>
+        ApplyAsync(Required(correction, nameof(correction)), (p, c, ct) => p.UpsertColorCorrectionAsync(c, ct));
+
+    public Task<SystemStateDto> RemoveColorCorrection(string deviceId) =>
+        ApplyAsync(Required(deviceId, nameof(deviceId)), (p, id, ct) => p.RemoveColorCorrectionAsync(id, ct));
+
     public async Task<SystemStateDto> RescanDevices()
     {
         using var _ = clients.BeginMutationScope(Context.ConnectionId);

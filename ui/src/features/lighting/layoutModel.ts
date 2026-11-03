@@ -1,6 +1,6 @@
 import type { LedPositionDto, VirtualCanvas, ZonePlacement } from '../../api/contracts.ts';
 import { clamp, roundTo } from '../../lib/math.ts';
-import { placementKey } from '../../lib/zones.ts';
+import { placementKey, zoneKey } from '../../lib/zones.ts';
 
 /** Smallest zone edge in canvas units. */
 export const MIN_ZONE_SIZE = 2;
@@ -54,6 +54,120 @@ export function autoArrange(canvas: VirtualCanvas): VirtualCanvas {
   return { ...canvas, placements };
 }
 
+/** LED index of each placement inside its physical zone, in chain order. */
+export function segmentLedOffsets(placements: readonly ZonePlacement[]): Map<string, number> {
+  const next = new Map<string, number>();
+  const offsets = new Map<string, number>();
+  for (const placement of placements) {
+    const zone = zoneKey(placement.deviceId, placement.zoneId);
+    const offset = next.get(zone) ?? 0;
+    offsets.set(placementKey(placement), offset);
+    next.set(zone, offset + (placement.ledCount ?? 0));
+  }
+  return offsets;
+}
+
+/**
+ * Appends a segment after the selected part of a resizable zone. The first split gives the existing
+ * box an id. When the header is already full, LEDs are taken from the selected segment.
+ */
+export function addSegment(
+  canvas: VirtualCanvas,
+  key: string,
+  zoneLedCount: number,
+  maxLedCount: number,
+): { canvas: VirtualCanvas; selectKey: string } | null {
+  const selectedIndex = canvas.placements.findIndex((placement) => placementKey(placement) === key);
+  if (selectedIndex < 0) {
+    return null;
+  }
+  const selected = canvas.placements[selectedIndex];
+  if (!selected) {
+    return null;
+  }
+
+  const placements = canvas.placements.map((placement) => ({ ...placement }));
+  const isSibling = (placement: ZonePlacement) =>
+    placement.deviceId === selected.deviceId && placement.zoneId === selected.zoneId;
+  if (placements.filter(isSibling).length === 1 && !placements[selectedIndex]?.segmentId) {
+    const current = placements[selectedIndex];
+    if (current) {
+      placements[selectedIndex] = {
+        ...current,
+        segmentId: 'seg1',
+        name: current.name ?? 'Segment 1',
+        ledCount: current.ledCount ?? zoneLedCount,
+      };
+    }
+  }
+
+  const donor = placements[selectedIndex];
+  if (!donor) {
+    return null;
+  }
+  const siblings = placements.filter(isSibling);
+  const used = siblings.reduce((sum, placement) => sum + (placement.ledCount ?? 0), 0);
+  let newCount = Math.min(8, Math.max(0, maxLedCount - used));
+  if (newCount < 1) {
+    const donorCount = donor.ledCount ?? zoneLedCount;
+    if (donorCount <= 1) {
+      return null;
+    }
+    newCount = Math.max(1, Math.floor(donorCount / 2));
+    placements[selectedIndex] = { ...donor, ledCount: donorCount - newCount };
+  }
+
+  const taken = new Set(siblings.map((placement) => placement.segmentId).filter((id): id is string => Boolean(id)));
+  let segmentNumber = siblings.length + 1;
+  let segmentId = `seg${segmentNumber}`;
+  while (taken.has(segmentId)) {
+    segmentNumber += 1;
+    segmentId = `seg${segmentNumber}`;
+  }
+
+  const created: ZonePlacement = {
+    deviceId: selected.deviceId,
+    zoneId: selected.zoneId,
+    segmentId,
+    name: `Segment ${siblings.length + 1}`,
+    x: roundTo(selected.x + selected.width + 8, 2),
+    y: selected.y,
+    width: selected.width,
+    height: selected.height,
+    rotation: 0,
+    enabled: true,
+    ledCount: newCount,
+    topology: donor.topology ?? null,
+    matrixColumns: null,
+    serpentine: false,
+  };
+  placements.splice(selectedIndex + 1, 0, created);
+  return { canvas: { ...canvas, placements }, selectKey: placementKey(created) };
+}
+
+/** Drops one segment. The last remaining part of a zone is left in place. */
+export function removeSegment(
+  canvas: VirtualCanvas,
+  key: string,
+): { canvas: VirtualCanvas; selectKey: string | null } | null {
+  const selected = canvas.placements.find((placement) => placementKey(placement) === key);
+  if (!selected?.segmentId) {
+    return null;
+  }
+  const isSibling = (placement: ZonePlacement) =>
+    placement.deviceId === selected.deviceId && placement.zoneId === selected.zoneId;
+  const siblings = canvas.placements.filter(isSibling);
+  if (siblings.length <= 1) {
+    return null;
+  }
+  const ordinal = siblings.findIndex((placement) => placementKey(placement) === key);
+  const placements = canvas.placements.filter((placement) => placementKey(placement) !== key);
+  const remaining = placements.filter(isSibling);
+  const nextIndex = ordinal >= remaining.length ? remaining.length - 1 : ordinal;
+  const next = remaining[nextIndex];
+  return { canvas: { ...canvas, placements }, selectKey: next ? placementKey(next) : null };
+}
+
 function samePlacement(a: ZonePlacement, b: ZonePlacement): boolean {
   return (
     a.x === b.x &&
@@ -62,7 +176,11 @@ function samePlacement(a: ZonePlacement, b: ZonePlacement): boolean {
     a.height === b.height &&
     a.rotation === b.rotation &&
     a.enabled === b.enabled &&
-    a.ledCount === b.ledCount
+    a.ledCount === b.ledCount &&
+    (a.name ?? null) === (b.name ?? null) &&
+    (a.topology ?? null) === (b.topology ?? null) &&
+    (a.matrixColumns ?? null) === (b.matrixColumns ?? null) &&
+    (a.serpentine ?? false) === (b.serpentine ?? false)
   );
 }
 

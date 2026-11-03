@@ -13,7 +13,7 @@ import type {
 
 export const DEVICE_CAPABILITIES = ['Rgb', 'FanControl', 'Sensors', 'Lcd'] as const satisfies readonly DeviceCapability[];
 
-export const LED_TOPOLOGIES = ['Point', 'Linear', 'Ring', 'Composite'] as const satisfies readonly LedTopology[];
+export const LED_TOPOLOGIES = ['Point', 'Linear', 'Ring', 'Composite', 'Matrix2D'] as const satisfies readonly LedTopology[];
 
 export const FAN_CHANNEL_KINDS = ['Fan', 'Pump'] as const satisfies readonly FanChannelKind[];
 

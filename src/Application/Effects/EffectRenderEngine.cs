@@ -400,12 +400,17 @@ public sealed partial class EffectRenderEngine(
 
             var rgbDevices = devices.OfType<IRgbDevice>().ToList();
             var canvas = CanvasLayoutService.BuildEffectiveCanvas(profile.Canvas, rgbDevices);
-            var placements = canvas.Placements
-                .GroupBy(p => (p.DeviceId, p.ZoneId))
-                .ToDictionary(g => g.Key, g => g.First());
+            var corrections = (profile.ColorCorrections ?? [])
+                .GroupBy(c => c.DeviceId, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
             Plans = rgbDevices
-                .Select(d => LedSamplePlan.Build(d, placements, canvas.Width, canvas.Height))
+                .Select(d => LedSamplePlan.Build(
+                    d,
+                    canvas.Placements,
+                    canvas.Width,
+                    canvas.Height,
+                    corrections.GetValueOrDefault(d.Id)))
                 .Where(p => p.Colors.Length > 0)
                 .ToList();
 

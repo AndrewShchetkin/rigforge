@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RigForge.Application.Effects;
@@ -209,6 +210,38 @@ public sealed class EffectParameterTests
             var effect = saved.RootElement.GetProperty("effect");
             Assert.False(effect.TryGetProperty("colors", out _));
             Assert.Equal(20, effect.GetProperty("parameters").GetProperty("temperatureLow").GetInt32());
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Missing_color_corrections_property_loads_as_an_empty_list()
+    {
+        var directory = Directory.CreateTempSubdirectory("rigforge-profile-test");
+        try
+        {
+            var store = new JsonProfileStore(Options.Create(new StorageOptions { DataDirectory = directory.FullName }));
+            await store.SaveAsync(
+                new RigProfile { Canvas = new VirtualCanvas { Width = 400 } },
+                TestContext.Current.CancellationToken);
+
+            var node = JsonNode.Parse(await File.ReadAllTextAsync(store.FilePath, TestContext.Current.CancellationToken))!.AsObject();
+            Assert.True(node.ContainsKey("colorCorrections"));
+            node.Remove("colorCorrections");
+            await File.WriteAllTextAsync(store.FilePath, node.ToJsonString(), TestContext.Current.CancellationToken);
+
+            var service = new ProfileService(store, _validator, NullLogger<ProfileService>.Instance);
+            await service.InitializeAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(_validator.Validate(service.Current).IsValid);
+            Assert.NotNull(service.Current.ColorCorrections);
+            Assert.Empty(service.Current.ColorCorrections);
+            Assert.Equal(RigProfile.CurrentSchemaVersion, service.Current.SchemaVersion);
+            Assert.Equal(400, service.Current.Canvas.Width);
+            Assert.Empty(Directory.GetFiles(directory.FullName, "profile.json.corrupt.*"));
         }
         finally
         {

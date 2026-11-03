@@ -46,6 +46,36 @@ public static class LedLayouts
         return leds;
     }
 
+    /// <summary>
+    /// Row-major matrix. <paramref name="columns"/> is clamped to 1..count. Cell centers are
+    /// <c>((col + 0.5) / columns, (row + 0.5) / rows)</c>. When <paramref name="serpentine"/> is set,
+    /// odd rows are reversed so a zigzag LED strip maps onto the grid.
+    /// </summary>
+    public static IReadOnlyList<LedPosition> Matrix2D(int count, int columns, bool serpentine = false)
+    {
+        if (count <= 0)
+        {
+            return [];
+        }
+
+        columns = Math.Clamp(columns, 1, Math.Max(1, count));
+        var rows = (count + columns - 1) / columns;
+        var leds = new LedPosition[count];
+        for (var i = 0; i < count; i++)
+        {
+            var row = i / columns;
+            var col = i % columns;
+            if (serpentine && (row & 1) == 1)
+            {
+                col = columns - 1 - col;
+            }
+
+            leds[i] = new LedPosition((col + 0.5f) / columns, (row + 0.5f) / rows);
+        }
+
+        return leds;
+    }
+
     /// <summary>Lays out daisy-chained segments (e.g. three fans on one channel) side by side, left to right.</summary>
     public static IReadOnlyList<LedPosition> Row(IReadOnlyList<(LedTopology Topology, int LedCount)> segments)
     {
@@ -74,10 +104,11 @@ public static class LedLayouts
         return result;
     }
 
-    public static IReadOnlyList<LedPosition> For(LedTopology topology, int count) => topology switch
+    public static IReadOnlyList<LedPosition> For(LedTopology topology, int count, int matrixColumns = 8, bool serpentine = false) => topology switch
     {
         LedTopology.Ring => Ring(count),
         LedTopology.Point when count == 1 => Point(),
+        LedTopology.Matrix2D => Matrix2D(count, matrixColumns, serpentine),
         _ => Linear(count),
     };
 }

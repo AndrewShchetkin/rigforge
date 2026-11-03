@@ -14,4 +14,7 @@ public sealed record RigProfile
     public IReadOnlyList<FanCurve> FanCurves { get; init; } = [];
 
     public LcdSettings Lcd { get; init; } = new();
+
+    /// <summary>Optional gamma and white balance, one entry per device.</summary>
+    public IReadOnlyList<DeviceColorCorrection> ColorCorrections { get; init; } = [];
 }
