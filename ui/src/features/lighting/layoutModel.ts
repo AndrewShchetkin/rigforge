@@ -129,7 +129,7 @@ export function addSegment(
     deviceId: selected.deviceId,
     zoneId: selected.zoneId,
     segmentId,
-    name: `Segment ${siblings.length + 1}`,
+    name: `Segment ${segmentNumber}`,
     x: roundTo(selected.x + selected.width + 8, 2),
     y: selected.y,
     width: selected.width,
@@ -165,6 +165,13 @@ export function removeSegment(
   const remaining = placements.filter(isSibling);
   const nextIndex = ordinal >= remaining.length ? remaining.length - 1 : ordinal;
   const next = remaining[nextIndex];
+  if (next && selected.ledCount !== null) {
+    const keptIndex = placements.findIndex((placement) => placement === next);
+    const kept = keptIndex >= 0 ? placements[keptIndex] : undefined;
+    if (kept) {
+      placements[keptIndex] = { ...kept, ledCount: (kept.ledCount ?? 0) + selected.ledCount };
+    }
+  }
   return { canvas: { ...canvas, placements }, selectKey: next ? placementKey(next) : null };
 }
 
@@ -184,16 +191,49 @@ function samePlacement(a: ZonePlacement, b: ZonePlacement): boolean {
   );
 }
 
-/** Structural equality, independent of placement order. */
+/** Structural equality. Order matters only inside each (deviceId, zoneId) group. */
 export function canvasEquals(a: VirtualCanvas, b: VirtualCanvas): boolean {
   if (a.width !== b.width || a.height !== b.height || a.placements.length !== b.placements.length) {
     return false;
   }
   const byKey = new Map(b.placements.map((placement) => [placementKey(placement), placement]));
-  return a.placements.every((placement) => {
-    const other = byKey.get(placementKey(placement));
-    return other !== undefined && samePlacement(placement, other);
-  });
+  return (
+    a.placements.every((placement) => {
+      const other = byKey.get(placementKey(placement));
+      return other !== undefined && samePlacement(placement, other);
+    }) && sameZoneSegmentOrder(a.placements, b.placements)
+  );
+}
+
+/** ARGB chain order: each zone must list the same placement keys in the same sequence. */
+function sameZoneSegmentOrder(left: readonly ZonePlacement[], right: readonly ZonePlacement[]): boolean {
+  const leftOrder = placementKeysByZone(left);
+  const rightOrder = placementKeysByZone(right);
+  if (leftOrder.size !== rightOrder.size) {
+    return false;
+  }
+  for (const [zone, sequence] of leftOrder) {
+    const other = rightOrder.get(zone);
+    if (other === undefined || !sameKeySequence(sequence, other)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function placementKeysByZone(placements: readonly ZonePlacement[]): Map<string, string[]> {
+  const order = new Map<string, string[]>();
+  for (const placement of placements) {
+    const zone = zoneKey(placement.deviceId, placement.zoneId);
+    const sequence = order.get(zone) ?? [];
+    sequence.push(placementKey(placement));
+    order.set(zone, sequence);
+  }
+  return order;
+}
+
+function sameKeySequence(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
 /** LED dot radius in canvas units: ~4.5 px on screen, smaller when neighbouring LEDs are close together. */
