@@ -11,6 +11,9 @@ public interface IControlClient
 
     Task LedPreview(LedPreviewDto frame);
 
+    /// <summary>About 10 Hz JPEG of the virtual canvas, only after SetPreview(Leds, true).</summary>
+    Task CanvasPreview(string jpegBase64);
+
     Task LcdPreview(string pngBase64);
 
     Task StateChanged(SystemStateDto state);

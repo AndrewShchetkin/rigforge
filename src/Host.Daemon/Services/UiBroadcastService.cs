@@ -45,11 +45,13 @@ internal sealed partial class UiBroadcastService(
         try
         {
             IReadOnlyList<ZonePreview>? lastPreview = null;
+            CanvasFrame? lastCanvas = null;
             while (!stoppingToken.IsCancellationRequested)
             {
                 while (!clients.HasSubscribers(PreviewChannel.Leds))
                 {
                     lastPreview = null;
+                    lastCanvas = null;
                     while (_subscriptionSignal.Reader.TryRead(out _))
                     {
                     }
@@ -65,14 +67,24 @@ internal sealed partial class UiBroadcastService(
                 using var timer = new PeriodicTimer(LedPreviewInterval);
                 while (clients.HasSubscribers(PreviewChannel.Leds) && await timer.WaitForNextTickAsync(stoppingToken))
                 {
-                    var preview = effects.LatestPreview;
-                    if (preview.Count == 0 || ReferenceEquals(preview, lastPreview) || !clients.HasSubscribers(PreviewChannel.Leds))
+                    if (!clients.HasSubscribers(PreviewChannel.Leds))
                     {
                         continue;
                     }
 
-                    lastPreview = preview;
-                    await SendAsync(hub.Clients.Group(ClientRegistry.GroupName(PreviewChannel.Leds)).LedPreview(DtoMapper.ToDto(preview)));
+                    var preview = effects.LatestPreview;
+                    if (preview.Count > 0 && !ReferenceEquals(preview, lastPreview))
+                    {
+                        lastPreview = preview;
+                        await SendAsync(hub.Clients.Group(ClientRegistry.GroupName(PreviewChannel.Leds)).LedPreview(DtoMapper.ToDto(preview)));
+                    }
+
+                    var canvas = effects.LatestCanvas;
+                    if (canvas is { Jpeg.Length: > 0 } && !ReferenceEquals(canvas, lastCanvas))
+                    {
+                        lastCanvas = canvas;
+                        await SendAsync(hub.Clients.Group(ClientRegistry.GroupName(PreviewChannel.Leds)).CanvasPreview(Convert.ToBase64String(canvas.Jpeg)));
+                    }
                 }
             }
         }

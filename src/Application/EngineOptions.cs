@@ -12,6 +12,9 @@ public sealed class RenderingOptions
 
     public int PreviewFramesPerSecond { get; set; } = 20;
 
+    /// <summary>Rate of the full-canvas JPEG while the lighting page is open. Device frames stay on direct sampling.</summary>
+    public int CanvasPreviewFramesPerSecond { get; set; } = 10;
+
     /// <summary>Unchanged frames are re-sent at this interval in case a controller reset itself.</summary>
     public TimeSpan KeepAliveInterval { get; set; } = TimeSpan.FromSeconds(2);
 }

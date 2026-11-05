@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using RigForge.Application.Effects;
 using RigForge.Core.Interfaces;
 using RigForge.Infrastructure.CrossPlatform.Asus;
+using RigForge.Infrastructure.CrossPlatform.Effects;
 using RigForge.Infrastructure.CrossPlatform.Kingston;
 using RigForge.Infrastructure.CrossPlatform.Manifests;
 using RigForge.Infrastructure.CrossPlatform.Nvidia;
@@ -31,6 +33,7 @@ public static class CrossPlatformServiceCollectionExtensions
         services.TryAddSingleton<IScreenCapturer, NullScreenCapturer>();
         services.TryAddSingleton<IProfileStore, JsonProfileStore>();
         services.AddSingleton<IDeviceManifestCatalog, JsonDeviceManifestCatalog>();
+        services.AddSingleton<IExternalEffectCatalog, WasmEffectCatalog>();
 
         services.AddSingleton<IDeviceProbe, NzxtDeviceProbe>();
         services.AddSingleton<IDeviceProbe, AsusAuraProbe>();

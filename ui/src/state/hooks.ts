@@ -7,10 +7,12 @@ import {
   ConnectionContext,
   DaemonApiContext,
   DaemonStateContext,
+  CanvasPreviewContext,
   LedPreviewContext,
   SystemContext,
 } from './context.ts';
 import type { DaemonApi } from './daemonApi.ts';
+import type { CanvasPreviewStore } from './canvasPreviewStore.ts';
 import type { DaemonState } from './reducer.ts';
 
 const NO_READINGS: readonly SensorReadingDto[] = [];
@@ -67,6 +69,11 @@ export function useSensorOptions(): readonly SensorOption[] {
 export function useLedPreview(zoneKey: string): Uint8Array | null {
   const store = useRequiredContext(LedPreviewContext, 'useLedPreview');
   return useSyncExternalStore(store.subscribe, () => store.getZoneColors(zoneKey));
+}
+
+/** The canvas JPEG store. Subscribers redraw the image themselves; this hook does not re-render on frames. */
+export function useCanvasPreviewStore(): CanvasPreviewStore {
+  return useRequiredContext(CanvasPreviewContext, 'useCanvasPreviewStore');
 }
 
 /** Enables a preview stream while the calling component is mounted. */

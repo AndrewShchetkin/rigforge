@@ -2,6 +2,7 @@ import { createContext } from 'react';
 import type { SystemStateDto } from '../api/contracts.ts';
 import type { ConnectionStatus } from '../api/daemonClient.ts';
 import type { DaemonApi } from './daemonApi.ts';
+import type { CanvasPreviewStore } from './canvasPreviewStore.ts';
 import type { LedPreviewStore } from './ledPreviewStore.ts';
 import type { DaemonState } from './reducer.ts';
 
@@ -13,3 +14,4 @@ export const SystemContext = createContext<SystemStateDto | null | undefined>(un
 export const ConnectionContext = createContext<ConnectionStatus | undefined>(undefined);
 export const DaemonApiContext = createContext<DaemonApi | undefined>(undefined);
 export const LedPreviewContext = createContext<LedPreviewStore | undefined>(undefined);
+export const CanvasPreviewContext = createContext<CanvasPreviewStore | undefined>(undefined);

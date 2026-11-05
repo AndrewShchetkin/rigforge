@@ -1,17 +1,18 @@
+using Microsoft.Extensions.Logging;
 using RigForge.Application.Effects.Library;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 
 namespace RigForge.Application.Effects;
 
-/// <summary>Catalog of the built-in effects.</summary>
-public sealed class EffectRegistry
+/// <summary>Catalog of the built-in effects, plus any external effects that do not reuse a built-in id.</summary>
+public sealed partial class EffectRegistry
 {
     public const string FallbackEffectId = RainbowWaveEffect.EffectId;
 
     private readonly Dictionary<string, (EffectDescriptor Descriptor, Func<IEffect> Create)> _effects;
 
-    public EffectRegistry(IScreenCapturer screenCapturer)
+    public EffectRegistry(IScreenCapturer screenCapturer, IExternalEffectCatalog? external = null, ILogger<EffectRegistry>? logger = null)
     {
         _effects = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -23,7 +24,33 @@ public sealed class EffectRegistry
             [TemperatureEffect.EffectId] = (TemperatureEffect.Info, () => new TemperatureEffect()),
             [AmbilightEffect.EffectId] = (AmbilightEffect.Info, () => new AmbilightEffect(screenCapturer)),
         };
+
+        if (external is null)
+        {
+            return;
+        }
+
+        foreach (var descriptor in external.Descriptors)
+        {
+            if (_effects.ContainsKey(descriptor.Id))
+            {
+                if (logger is not null)
+                {
+                    LogBuiltInIdIgnored(logger, descriptor.Id);
+                }
+
+                continue;
+            }
+
+            var effectId = descriptor.Id;
+            _effects[effectId] = (descriptor, () => external.TryCreate(effectId, out var effect)
+                ? effect
+                : throw new InvalidOperationException($"External effect '{effectId}' could not be created."));
+        }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "External effect {EffectId} matches a built-in effect and was ignored")]
+    private static partial void LogBuiltInIdIgnored(ILogger logger, string effectId);
 
     public IReadOnlyList<EffectDescriptor> Descriptors => _effects.Values.Select(e => e.Descriptor).ToArray();
 

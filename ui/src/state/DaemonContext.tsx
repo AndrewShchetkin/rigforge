@@ -4,12 +4,14 @@ import { describeHubError } from '../api/errors.ts';
 import { checkSystemState } from '../api/schemas.ts';
 import { useToast } from '../components/feedback/useToast.ts';
 import {
+  CanvasPreviewContext,
   ConnectionContext,
   DaemonApiContext,
   DaemonStateContext,
   LedPreviewContext,
   SystemContext,
 } from './context.ts';
+import { createCanvasPreviewStore } from './canvasPreviewStore.ts';
 import { createDaemonApi, type DaemonApiSink } from './daemonApi.ts';
 import { createLedPreviewStore } from './ledPreviewStore.ts';
 import { daemonReducer, initialDaemonState } from './reducer.ts';
@@ -19,6 +21,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
   const [client] = useState(() => new DaemonClient());
   const [ledPreview] = useState(createLedPreviewStore);
+  const [canvasPreview] = useState(createCanvasPreviewStore);
   const [state, dispatch] = useReducer(daemonReducer, initialDaemonState);
 
   const sink = useMemo<DaemonApiSink>(
@@ -30,12 +33,13 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       clearPreview: (channel) => {
         if (channel === 'Leds') {
           ledPreview.clear();
+          canvasPreview.clear();
         } else {
           dispatch({ type: 'lcdPreviewReceived', png: null });
         }
       },
     }),
-    [ledPreview],
+    [canvasPreview, ledPreview],
   );
 
   const api = useMemo(() => createDaemonApi(client, sink, toast), [client, sink, toast]);
@@ -54,6 +58,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       client.on('FanStatus', (fanStatus) => dispatch({ type: 'fanStatusReceived', fanStatus })),
       client.on('LcdPreview', (png) => dispatch({ type: 'lcdPreviewReceived', png })),
       client.on('LedPreview', ledPreview.publish),
+      client.on('CanvasPreview', canvasPreview.publish),
     ];
     client.start();
     return () => {
@@ -62,16 +67,18 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       }
       void client.stop();
     };
-  }, [client, ledPreview, sink, toast]);
+  }, [canvasPreview, client, ledPreview, sink, toast]);
 
   return (
     <DaemonApiContext value={api}>
       <LedPreviewContext value={ledPreview}>
-        <ConnectionContext value={state.connection}>
-          <SystemContext value={state.system}>
-            <DaemonStateContext value={state}>{children}</DaemonStateContext>
-          </SystemContext>
-        </ConnectionContext>
+        <CanvasPreviewContext value={canvasPreview}>
+          <ConnectionContext value={state.connection}>
+            <SystemContext value={state.system}>
+              <DaemonStateContext value={state}>{children}</DaemonStateContext>
+            </SystemContext>
+          </ConnectionContext>
+        </CanvasPreviewContext>
       </LedPreviewContext>
     </DaemonApiContext>
   );

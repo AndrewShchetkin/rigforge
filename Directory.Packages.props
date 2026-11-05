@@ -13,6 +13,9 @@
     <PackageVersion Include="SkiaSharp" Version="4.154.0" />
     <PackageVersion Include="SkiaSharp.NativeAssets.Linux" Version="4.154.0" />
   </ItemGroup>
+  <ItemGroup Label="Scripting">
+    <PackageVersion Include="Wasmtime" Version="48.0.2" />
+  </ItemGroup>
   <ItemGroup Label="Application">
     <PackageVersion Include="FluentValidation" Version="12.2.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />

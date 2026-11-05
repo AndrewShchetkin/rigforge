@@ -271,6 +271,8 @@ export interface DaemonHubEvents {
   FanStatus: (status: FanStatusDto[]) => void;
   /** ~20 Hz, only after SetPreview('Leds', true) */
   LedPreview: (frame: LedPreviewDto) => void;
+  /** ~10 Hz JPEG of the whole effect field, only after SetPreview('Leds', true) */
+  CanvasPreview: (jpegBase64: string) => void;
   /** LCD frame rate, only after SetPreview('Lcd', true); base64 PNG */
   LcdPreview: (pngBase64: string) => void;
   /** Devices or profile changed (possibly by another client). */

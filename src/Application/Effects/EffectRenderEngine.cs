@@ -7,16 +7,20 @@ using RigForge.Application.Profiles;
 using RigForge.Application.Telemetry;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
+using SkiaSharp;
 
 namespace RigForge.Application.Effects;
 
 /// <summary>LED colors of one zone for the UI preview (RGB triplets).</summary>
 public sealed record ZonePreview(string DeviceId, string ZoneId, byte[] Rgb);
 
+/// <summary>JPEG of the virtual canvas while a UI client is watching the lighting preview.</summary>
+public sealed record CanvasFrame(int Width, int Height, byte[] Jpeg);
+
 /// <summary>
-/// The lighting loop: renders the active effect onto the virtual RGBA canvas, samples it at every
-/// LED position and hands the frames to per-device dispatchers. Runs on a dedicated thread paced by
-/// <see cref="IPrecisionTimer"/> so 60 FPS is reachable on Windows as well.
+/// The lighting loop: samples the active effect at every LED and hands the frames to per-device
+/// dispatchers. While a UI client watches the lighting preview it also paints the virtual canvas.
+/// Runs on a dedicated thread paced by <see cref="IPrecisionTimer"/> so 60 FPS is reachable on Windows.
 /// </summary>
 public sealed partial class EffectRenderEngine(
     DeviceManager devices,
@@ -32,6 +36,7 @@ public sealed partial class EffectRenderEngine(
     private readonly Dictionary<string, RgbFrameDispatcher> _dispatchers = new(StringComparer.Ordinal);
     private readonly ManualResetEventSlim _wakeSignal = new(false);
     private volatile IReadOnlyList<ZonePreview> _latestPreview = [];
+    private volatile CanvasFrame? _latestCanvas;
     private volatile bool _previewRequested;
     private volatile bool _wakeOnTelemetry;
 
@@ -51,6 +56,8 @@ public sealed partial class EffectRenderEngine(
     }
 
     public IReadOnlyList<ZonePreview> LatestPreview => _latestPreview;
+
+    public CanvasFrame? LatestCanvas => _latestCanvas;
 
     public double FramesPerSecond { get; private set; }
 
@@ -108,7 +115,10 @@ public sealed partial class EffectRenderEngine(
             var fpsWindowStart = clock.Elapsed;
             var framesInWindow = 0;
             var lastPreview = TimeSpan.Zero;
+            var lastCanvas = TimeSpan.Zero;
+            var canvasPublished = false;
             var previewInterval = TimeSpan.FromSeconds(1.0 / Math.Max(1, settingsOptions.PreviewFramesPerSecond));
+            var canvasInterval = TimeSpan.FromSeconds(1.0 / Math.Max(1, settingsOptions.CanvasPreviewFramesPerSecond));
             var staticRendered = false;
             var staticPreviewBuilt = false;
             DateTimeOffset? lastStaticTelemetryTimestamp = null;
@@ -120,6 +130,11 @@ public sealed partial class EffectRenderEngine(
                 var profile = profiles.Current;
                 var currentDevices = devices.Devices;
                 var previewRequested = _previewRequested;
+                if (!previewRequested)
+                {
+                    canvasPublished = false;
+                }
+
                 var snapshot = telemetry.Latest;
 
                 var effectChanged = frame.SyncEffect(profile.Effect, registry, frameStart);
@@ -147,12 +162,14 @@ public sealed partial class EffectRenderEngine(
                     var stateChanged = !staticRendered || effectChanged || layoutChanged || telemetryChanged;
                     if (stateChanged || (previewRequested && !staticPreviewBuilt))
                     {
-                        RenderFrame(frame, profile.Effect, (frameStart - frame.EffectStartedAt).TotalSeconds, snapshot);
+                        var staticEffectTime = (frameStart - frame.EffectStartedAt).TotalSeconds;
+                        var staticPixelsReady = RenderFrame(frame, profile.Effect, staticEffectTime, snapshot);
                         staticRendered = true;
                         lastStaticTelemetryTimestamp = descriptor.UsesSensor ? snapshot.Timestamp : null;
                         if (previewRequested)
                         {
                             _latestPreview = BuildPreview(frame.Plans);
+                            PublishCanvas(frame, profile.Effect, staticEffectTime, snapshot, staticPixelsReady);
                             lastPreview = frameStart;
                             staticPreviewBuilt = true;
                         }
@@ -173,12 +190,20 @@ public sealed partial class EffectRenderEngine(
                 staticPreviewBuilt = false;
                 lastStaticTelemetryTimestamp = null;
 
-                RenderFrame(frame, profile.Effect, (frameStart - frame.EffectStartedAt).TotalSeconds, snapshot);
+                var effectTime = (frameStart - frame.EffectStartedAt).TotalSeconds;
+                var pixelsReady = RenderFrame(frame, profile.Effect, effectTime, snapshot);
 
                 if (previewRequested && frameStart - lastPreview >= previewInterval)
                 {
                     _latestPreview = BuildPreview(frame.Plans);
                     lastPreview = frameStart;
+                }
+
+                if (previewRequested && (!canvasPublished || frameStart - lastCanvas >= canvasInterval))
+                {
+                    PublishCanvas(frame, profile.Effect, effectTime, snapshot, pixelsReady);
+                    lastCanvas = frameStart;
+                    canvasPublished = true;
                 }
 
                 framesInWindow++;
@@ -212,17 +237,18 @@ public sealed partial class EffectRenderEngine(
         }
     }
 
-    private void RenderFrame(FrameState frame, EffectSettings settings, double effectTime, TelemetrySnapshot snapshot)
+    /// <returns>True when <see cref="FrameState.Pixels"/> already holds this frame. Direct sampling leaves it untouched.</returns>
+    private bool RenderFrame(FrameState frame, EffectSettings settings, double effectTime, TelemetrySnapshot snapshot)
     {
         var context = new EffectFrameContext(
             frame.Width, frame.Height, effectTime, settings, frame.Colors, snapshot,
             frame.Speed, frame.Angle, frame.SensorSelector, frame.TemperatureLow, frame.TemperatureHigh);
         var brightness = Math.Clamp(settings.Brightness, 0f, 1f);
+        var pixelsReady = false;
         try
         {
-            // Direct LED Sampling: procedural effects compute colors only at real LED points and the
-            // 320x180 canvas is neither filled nor rasterized — also while the UI preview is open,
-            // because the preview reads plan.Colors just like the device dispatchers do.
+            // Device frames stay on direct sampling. The 320x180 buffer is filled only for effects that
+            // cannot sample points, or later for the UI canvas while a preview subscriber is connected.
             var sampledDirectly = false;
             if (frame.Plans.Count > 0
                 && frame.Effect!.TrySamplePoints(frame.Plans[0].Points, frame.Plans[0].Colors, in context))
@@ -248,6 +274,8 @@ public sealed partial class EffectRenderEngine(
                 {
                     plan.Sample(pixels, frame.Width, frame.Height, brightness);
                 }
+
+                pixelsReady = true;
             }
 
             frame.EffectFailed = false;
@@ -261,6 +289,7 @@ public sealed partial class EffectRenderEngine(
                 frame.EffectFailed = true;
             }
 
+            pixelsReady = false;
             foreach (var plan in frame.Plans)
             {
                 Array.Fill(plan.Colors, RgbColor.Black);
@@ -274,6 +303,34 @@ public sealed partial class EffectRenderEngine(
                 dispatcher.Post(plan.Colors);
             }
         }
+
+        return pixelsReady;
+    }
+
+    private void PublishCanvas(FrameState frame, EffectSettings settings, double effectTime, TelemetrySnapshot snapshot, bool pixelsReady)
+    {
+        if (frame.Width <= 0 || frame.Height <= 0 || frame.Pixels.Length < frame.Width * frame.Height * 4)
+        {
+            return;
+        }
+
+        if (!pixelsReady)
+        {
+            var context = new EffectFrameContext(
+                frame.Width, frame.Height, effectTime, settings, frame.Colors, snapshot,
+                frame.Speed, frame.Angle, frame.SensorSelector, frame.TemperatureLow, frame.TemperatureHigh);
+            try
+            {
+                frame.Effect!.Render(frame.Pixels.AsSpan(), in context);
+            }
+            catch (Exception ex)
+            {
+                LogCanvasPreviewFailed(ex, frame.Effect!.Descriptor.Id);
+                return;
+            }
+        }
+
+        _latestCanvas = new CanvasFrame(frame.Width, frame.Height, frame.EncodeJpeg());
     }
 
     private void SyncDispatchers(IReadOnlyList<LedSamplePlan> plans, TimeSpan keepAlive)
@@ -322,6 +379,9 @@ public sealed partial class EffectRenderEngine(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Effect {EffectId} threw while rendering; showing black")]
     private partial void LogEffectFailed(Exception exception, string effectId);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Effect {EffectId} threw while painting the canvas preview")]
+    private partial void LogCanvasPreviewFailed(Exception exception, string effectId);
 
     /// <summary>Render-thread-only state: active effect, canvas buffer and sample plans.</summary>
     private sealed class FrameState : IDisposable
@@ -423,6 +483,14 @@ public sealed partial class EffectRenderEngine(
             }
 
             return true;
+        }
+
+        public byte[] EncodeJpeg()
+        {
+            var info = new SKImageInfo(Width, Height, SKColorType.Rgba8888, SKAlphaType.Opaque);
+            using var image = SKImage.FromPixelCopy(info, Pixels);
+            using var data = image.Encode(SKEncodedImageFormat.Jpeg, 80);
+            return data.ToArray();
         }
 
         public void Dispose()

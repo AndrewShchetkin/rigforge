@@ -110,6 +110,10 @@ export const ZoneNode = memo(function ZoneNode({
         text={name || zone?.name || `${placement.zoneId} (not detected)`}
         fontSize={LABEL_PX / scale}
         fill={enabled ? '#e4e4e7' : '#71717a'}
+        shadowColor="#000"
+        shadowBlur={3 / scale}
+        shadowOffsetY={1 / scale}
+        shadowOpacity={0.9}
         wrap="none"
         ellipsis
         listening={false}

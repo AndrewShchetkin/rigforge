@@ -1,10 +1,11 @@
 import type Konva from 'konva';
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Layer, Rect, Shape, Stage, Transformer } from 'react-konva';
+import { Image as CanvasImage, Layer, Rect, Shape, Stage, Transformer } from 'react-konva';
 import type { VirtualCanvas } from '../../api/contracts.ts';
 import { clamp } from '../../lib/math.ts';
 import { useElementWidth } from '../../lib/useElementWidth.ts';
 import { placementKey, zoneKey, type ZoneRef } from '../../lib/zones.ts';
+import { useCanvasPreviewStore } from '../../state/hooks.ts';
 import { GRID_STEP, ROTATION_SNAPS, segmentLedOffsets, type PlacementPatch } from './layoutModel.ts';
 import { ZoneNode } from './ZoneNode.tsx';
 
@@ -14,10 +15,55 @@ const ACCENT = '#a78bfa';
 const limitBox: NonNullable<Konva.TransformerConfig['boundBoxFunc']> = (oldBox, newBox) =>
   Math.abs(newBox.width) < MIN_BOX_PX || Math.abs(newBox.height) < MIN_BOX_PX ? oldBox : newBox;
 
+const CanvasEffectImage = memo(function CanvasEffectImage({ width, height }: { width: number; height: number }) {
+  const store = useCanvasPreviewStore();
+  const imageRef = useRef<Konva.Image>(null);
+
+  useEffect(() => {
+    let generation = 0;
+    let active = true;
+    const apply = () => {
+      const node = imageRef.current;
+      if (!node || !active) {
+        return;
+      }
+
+      const url = store.getUrl();
+      const ticket = ++generation;
+      if (!url) {
+        node.image(undefined);
+        node.getLayer()?.batchDraw();
+        return;
+      }
+
+      const image = new window.Image();
+      image.onload = () => {
+        if (!active || ticket !== generation) {
+          return;
+        }
+
+        node.image(image);
+        node.getLayer()?.batchDraw();
+      };
+      image.src = url;
+    };
+
+    apply();
+    const unsubscribe = store.subscribe(apply);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [store]);
+
+  return <CanvasImage ref={imageRef} image={undefined} width={width} height={height} listening={false} />;
+});
+
 const CanvasBackground = memo(function CanvasBackground({ width, height }: { width: number; height: number }) {
   return (
     <>
       <Rect width={width} height={height} fill="#0b0b0f" />
+      <CanvasEffectImage width={width} height={height} />
       <Shape
         sceneFunc={(context, shape) => {
           context.beginPath();
