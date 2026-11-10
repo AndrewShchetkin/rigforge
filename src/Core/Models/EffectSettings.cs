@@ -13,6 +13,9 @@ public sealed record EffectSettings
 {
     public string EffectId { get; init; } = "rainbow-wave";
 
+    /// <summary>Master lighting power. False blacks out every LED while keeping <see cref="Brightness"/> for when power returns.</summary>
+    public bool Enabled { get; init; } = true;
+
     /// <summary>Global brightness, 0..1.</summary>
     public float Brightness { get; init; } = 1f;
 
@@ -69,6 +72,7 @@ public sealed class EffectSettingsJsonConverter : JsonConverter<EffectSettings>
         return new EffectSettings
         {
             EffectId = GetString(root, "effectId") ?? "rainbow-wave",
+            Enabled = GetBool(root, "enabled") ?? true,
             Brightness = GetFloat(root, "brightness") ?? 1f,
             TargetFps = GetInt(root, "targetFps") ?? 60,
             Parameters = parameters,
@@ -79,6 +83,7 @@ public sealed class EffectSettingsJsonConverter : JsonConverter<EffectSettings>
     {
         writer.WriteStartObject();
         writer.WriteString("effectId", value.EffectId);
+        writer.WriteBoolean("enabled", value.Enabled);
         writer.WriteNumber("brightness", value.Brightness);
         writer.WriteNumber("targetFps", value.TargetFps);
         writer.WritePropertyName("parameters");
@@ -109,6 +114,21 @@ public sealed class EffectSettingsJsonConverter : JsonConverter<EffectSettings>
 
         value = default;
         return false;
+    }
+
+    private static bool? GetBool(JsonElement root, string name)
+    {
+        if (!TryGetPropertyIgnoreCase(root, name, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null,
+        };
     }
 
     private static string? GetString(JsonElement root, string name) =>

@@ -16,7 +16,8 @@ internal sealed class TemperatureEffect : IEffect
             EffectParameterDefinition.SensorSelector("sensorSelector", "Sensor", "role:CpuTemperature"),
             EffectParameterDefinition.FloatRange("temperatureLow", "Cold at", defaultValue: 35, min: 0, max: 120, step: 1, unit: "°C"),
             EffectParameterDefinition.FloatRange("temperatureHigh", "Hot at", defaultValue: 80, min: 0, max: 120, step: 1, unit: "°C"),
-        ]);
+        ],
+        Category: EffectCategory.Reactive);
 
     private static readonly string DefaultSelector = TelemetrySnapshot.RoleSelector(SensorRole.CpuTemperature);
 

@@ -3,6 +3,7 @@ import { Button } from '../../components/ui/Button.tsx';
 import { CloseIcon, PlusIcon } from '../../components/ui/icons.tsx';
 import { helpId } from '../../components/ui/styles.ts';
 import { suggestedColor } from './effectModel.ts';
+import { COLOR_PALETTES, fitPaletteColors } from './palettes.ts';
 
 interface ColorListEditorProps {
   colors: readonly string[];
@@ -50,6 +51,34 @@ export function ColorListEditor({ colors, min, max, error, onChange }: ColorList
           </Button>
         </li>
       </ul>
+      {max >= 2 && (
+        <div className="mt-2.5">
+          <p className="mb-1.5 text-xs text-zinc-500">Palettes</p>
+          <ul className="flex flex-wrap gap-1.5">
+            {COLOR_PALETTES.map((palette) => {
+              const fitted = fitPaletteColors(palette.colors, min, max);
+              const active = sameColors(colors, fitted);
+              return (
+                <li key={palette.id}>
+                  <button
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => onChange(fitted)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border py-0.5 pr-2 pl-1 text-xs transition-colors ${active ? 'border-violet-400 bg-violet-500/15 text-violet-100' : 'border-zinc-700 bg-zinc-950/70 text-zinc-200 hover:border-violet-400/70'}`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-3 w-8 rounded-full border border-white/10"
+                      style={{ backgroundImage: `linear-gradient(90deg, ${palette.colors.join(', ')})` }}
+                    />
+                    {palette.name}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       {error !== undefined && (
         <p id={helpId(id)} className="mt-1.5 text-xs text-red-400">
           {error}
@@ -57,4 +86,8 @@ export function ColorListEditor({ colors, min, max, error, onChange }: ColorList
       )}
     </fieldset>
   );
+}
+
+function sameColors(current: readonly string[], next: readonly string[]): boolean {
+  return current.length === next.length && current.every((color, index) => color.toLowerCase() === next[index]?.toLowerCase());
 }

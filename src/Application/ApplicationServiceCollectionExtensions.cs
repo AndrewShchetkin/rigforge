@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RigForge.Application.AioDisplay;
+using RigForge.Application.Diagnostics;
 using RigForge.Application.Cooling;
 using RigForge.Application.Devices;
 using RigForge.Application.Effects;
@@ -26,6 +27,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddSingleton<CanvasLayoutService>();
         services.AddSingleton<EffectRegistry>();
         services.AddSingleton<EffectRenderEngine>();
+        services.AddSingleton<PerformanceMonitor>();
         services.AddSingleton<FanControlEngine>();
         services.AddSingleton<LcdRenderEngine>();
         services.AddSingleton<IValidator<RigProfile>, RigProfileValidator>();

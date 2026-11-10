@@ -4,6 +4,7 @@ import type { ConnectionStatus } from '../api/daemonClient.ts';
 import type { DaemonApi } from './daemonApi.ts';
 import type { CanvasPreviewStore } from './canvasPreviewStore.ts';
 import type { LedPreviewStore } from './ledPreviewStore.ts';
+import type { PerformanceStore } from './performanceStore.ts';
 import type { DaemonState } from './reducer.ts';
 
 // Several narrow contexts so that components which only need the snapshot, the connection status,
@@ -15,3 +16,4 @@ export const ConnectionContext = createContext<ConnectionStatus | undefined>(und
 export const DaemonApiContext = createContext<DaemonApi | undefined>(undefined);
 export const LedPreviewContext = createContext<LedPreviewStore | undefined>(undefined);
 export const CanvasPreviewContext = createContext<CanvasPreviewStore | undefined>(undefined);
+export const PerformanceContext = createContext<PerformanceStore | undefined>(undefined);

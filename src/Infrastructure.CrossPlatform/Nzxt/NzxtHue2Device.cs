@@ -74,6 +74,7 @@ internal sealed class NzxtHue2Device : IRgbDevice, IFanController, ISensorProvid
         {
             ["Firmware"] = firmware,
             ["ProductId"] = $"0x{model.ProductId:X4}",
+            ["vidPid"] = UsbVidPid.Format(hid.Device, NzxtCatalog.VendorId, model.ProductId),
             ["UsbPath"] = hid.Device?.DevicePath ?? string.Empty,
             ["Accessories"] = string.Join("; ", accessories.Select((a, i) => $"ch{i + 1}: {(a.Count == 0 ? "none" : string.Join(", ", a.Select(x => NzxtCatalog.Accessories.TryGetValue(x, out var acc) ? acc.Name : $"0x{x:X2}")))}")),
         };

@@ -7,7 +7,7 @@ namespace RigForge.Infrastructure.CrossPlatform.Kingston;
 
 /// <summary>
 /// Safely detects Kingston FURY DDR5 RGB modules:
-/// 1) checks SMBIOS Type 17 for <c>KF5*</c> part numbers before touching SMBus,
+/// 1) requires a <c>KF5*</c> module from SMBIOS Type 17 or cached sysfs SPD / udev / EDAC before touching SMBus,
 /// 2) probes only <c>0x60..0x63</c> (never SPD <c>0x50..0x57</c> or PMIC <c>0x48..0x4F</c>),
 /// 3) verifies the <c>"FURY"</c> ASCII signature and supported DDR5 model byte (<c>0x06</c>).
 /// </summary>
@@ -40,7 +40,7 @@ internal sealed partial class KingstonFuryProbe(
 
         var installedMemory = smbusFactory.GetInstalledMemory();
         var kingstonDdr5Sticks = installedMemory.Where(static m => m.IsKingstonFuryDdr5).ToArray();
-        if (furySettings.RequireSmbiosMatch && kingstonDdr5Sticks.Length == 0)
+        if (!SmbusProbePolicy.AllowsBusProbe(smbusFactory, furySettings.RequireSmbiosMatch, kingstonDdr5Sticks.Length))
         {
             LogNoKingstonSmbios();
             return Task.FromResult<IReadOnlyList<IHardwareDevice>>([]);
@@ -139,7 +139,7 @@ internal sealed partial class KingstonFuryProbe(
             .ToArray();
     }
 
-    [LoggerMessage(Level = LogLevel.Debug, Message = "SMBIOS reports no Kingston DDR5 (KF5*) modules; skipping SMBus probe")]
+    [LoggerMessage(Level = LogLevel.Debug, Message = "No Kingston DDR5 (KF5*) module identity; skipping SMBus probe")]
     private partial void LogNoKingstonSmbios();
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Kingston FURY DDR5 detected in SMBIOS, but SMBus backend ({Backend}) is unavailable: {Reason}")]

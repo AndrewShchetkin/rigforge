@@ -40,6 +40,7 @@ internal sealed class AsusAuraUsbDevice : IRgbDevice
         {
             ["Firmware"] = firmware,
             ["ProductId"] = $"0x{hid.Device.ProductID:X4}",
+            ["vidPid"] = UsbVidPid.Format(hid.Device, AuraUsbProtocol.VendorId, hid.Device.ProductID),
             ["UsbPath"] = hid.Device.DevicePath,
             ["Channels"] = string.Join(", ", channels.Select(c => $"{c.Kind} (effect {c.EffectChannel}, direct {c.DirectChannel})")),
         };

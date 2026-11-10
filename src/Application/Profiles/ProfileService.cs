@@ -62,9 +62,10 @@ public sealed partial class ProfileService(
             return;
         }
 
-        // Source-generated JSON leaves a missing colorCorrections array null. Treat that as empty
-        // so an older profile.json stays valid. An explicit null that skips this step still fails.
-        loaded = loaded.ColorCorrections is null ? loaded with { ColorCorrections = [] } : loaded;
+        // Source-generated JSON leaves a missing colorCorrections array or displays object null.
+        // Treat those as empty so an older profile.json stays valid. An explicit null that skips
+        // this step still fails validation.
+        loaded = CoerceCollections(loaded);
 
         var validation = await validator.ValidateAsync(loaded, cancellationToken);
         if (!validation.IsValid)
@@ -113,10 +114,38 @@ public sealed partial class ProfileService(
     /// <summary>Brings a profile to the current schema: version bumped, effect parameters completed from defaults.</summary>
     private RigProfile NormalizeProfile(RigProfile profile)
     {
+        if (profile.Displays is null)
+        {
+            profile = profile with { Displays = new Dictionary<string, LcdSettings>(StringComparer.Ordinal) };
+        }
+
         var effect = effects is null || profile.Effect is null ? profile.Effect : effects.FillDefaults(profile.Effect);
         return profile.SchemaVersion == RigProfile.CurrentSchemaVersion && ReferenceEquals(effect, profile.Effect)
             ? profile
             : profile with { SchemaVersion = RigProfile.CurrentSchemaVersion, Effect = effect! };
+    }
+
+    /// <summary>Replaces the whole profile after validation. Used by profile import.</summary>
+    public Task<ProfileUpdateResult> ReplaceProfileAsync(RigProfile profile, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return UpdateAsync(_ => CoerceCollections(profile), cancellationToken);
+    }
+
+    private static RigProfile CoerceCollections(RigProfile profile)
+    {
+        var corrections = profile.ColorCorrections ?? [];
+        var displays = profile.Displays ?? new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
+        if (ReferenceEquals(corrections, profile.ColorCorrections) && ReferenceEquals(displays, profile.Displays))
+        {
+            return profile;
+        }
+
+        return profile with
+        {
+            ColorCorrections = corrections,
+            Displays = displays,
+        };
     }
 
     private async Task<RigProfile> SalvageAsync(RigProfile loaded, CancellationToken cancellationToken)
@@ -160,6 +189,27 @@ public sealed partial class ProfileService(
             }
         }
 
+        var keptDisplays = new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
+        if (loaded.Displays is not null)
+        {
+            foreach (var (deviceId, display) in loaded.Displays)
+            {
+                if (string.IsNullOrEmpty(deviceId) || display is null)
+                {
+                    continue;
+                }
+
+                var candidate = new Dictionary<string, LcdSettings>(keptDisplays, StringComparer.Ordinal)
+                {
+                    [deviceId] = display,
+                };
+                if ((await validator.ValidateAsync(fallback with { Displays = candidate }, cancellationToken)).IsValid)
+                {
+                    keptDisplays[deviceId] = display;
+                }
+            }
+        }
+
         return NormalizeProfile(fallback with
         {
             Canvas = canvas,
@@ -167,6 +217,7 @@ public sealed partial class ProfileService(
             Lcd = lcd,
             FanCurves = keptCurves,
             ColorCorrections = keptCorrections,
+            Displays = keptDisplays,
         });
     }
 

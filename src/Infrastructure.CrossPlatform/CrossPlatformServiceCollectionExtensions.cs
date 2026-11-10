@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RigForge.Application.Effects;
 using RigForge.Core.Interfaces;
+using RigForge.Infrastructure.CrossPlatform.Audio;
 using RigForge.Infrastructure.CrossPlatform.Asus;
 using RigForge.Infrastructure.CrossPlatform.Effects;
 using RigForge.Infrastructure.CrossPlatform.Kingston;
@@ -31,6 +32,7 @@ public static class CrossPlatformServiceCollectionExtensions
         services.TryAddSingleton<ISmbusControllerFactory, NullSmbusControllerFactory>();
         services.TryAddSingleton<IPrecisionTimer, SleepPrecisionTimer>();
         services.TryAddSingleton<IScreenCapturer, NullScreenCapturer>();
+        services.TryAddSingleton<IAudioLevelProvider, NullAudioLevelProvider>();
         services.TryAddSingleton<IProfileStore, JsonProfileStore>();
         services.AddSingleton<IDeviceManifestCatalog, JsonDeviceManifestCatalog>();
         services.AddSingleton<IExternalEffectCatalog, WasmEffectCatalog>();
@@ -39,6 +41,8 @@ public static class CrossPlatformServiceCollectionExtensions
         services.AddSingleton<IDeviceProbe, AsusAuraProbe>();
         services.AddSingleton<IDeviceProbe, KingstonFuryProbe>();
         services.AddSingleton<IDeviceProbe, NvmlProbe>();
+        services.AddMainboardAndHubProbes();
+        services.AddPeripheralsDramAndDiscoveryProbes(configuration);
 
         return services;
     }

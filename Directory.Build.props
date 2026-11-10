@@ -12,4 +12,11 @@
     <Version>0.1.0</Version>
     <AnalysisLevel>latest</AnalysisLevel>
   </PropertyGroup>
+
+  <!-- NuGet packages can ship huge native symbols (SkiaSharp's libSkiaSharp.pdb is ~92 MB). Package .pdb files do not belong in a deployment. -->
+  <Target Name="ExcludePackageSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' AND '%(ResolvedFileToPublish.NuGetPackageId)' != ''" />
+    </ItemGroup>
+  </Target>
 </Project>

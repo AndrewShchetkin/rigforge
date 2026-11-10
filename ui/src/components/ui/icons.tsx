@@ -150,11 +150,66 @@ export function GridIcon(props: IconProps) {
   );
 }
 
+export function SearchIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4 4" />
+    </BaseIcon>
+  );
+}
+
 export function UndoIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
       <path d="M9 14 4 9l5-5" />
       <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </BaseIcon>
+  );
+}
+
+export function BlinkIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M13 2.5 5.5 13H11l-1 8.5L18.5 10H13l0-7.5Z" />
+    </BaseIcon>
+  );
+}
+
+export function DownloadIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 4v11" />
+      <path d="m7.5 11.5 4.5 4.5 4.5-4.5" />
+      <path d="M5 20h14" />
+    </BaseIcon>
+  );
+}
+
+export function UploadIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 16V5" />
+      <path d="m7.5 8.5 4.5-4.5 4.5 4.5" />
+      <path d="M5 20h14" />
+    </BaseIcon>
+  );
+}
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+    </BaseIcon>
+  );
+}
+
+export function ShieldIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 3.2 5.5 6v5.6c0 3.6 2.5 6.2 6.5 7.6 4-1.4 6.5-4 6.5-7.6V6L12 3.2Z" />
+      <path d="m9.2 12 1.9 1.9 3.7-3.8" />
     </BaseIcon>
   );
 }

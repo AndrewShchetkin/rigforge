@@ -59,7 +59,10 @@ public sealed class KingstonFuryOptions
     /// <summary>DIMM slot offsets from base address 0x60 to probe (default 0..3 = 0x60..0x63).</summary>
     public int[] CandidateSlots { get; set; } = [0, 1, 2, 3];
 
-    /// <summary>Require SMBIOS Type 17 to report at least one KF5* DDR5 module before opening SMBus.</summary>
+    /// <summary>
+    /// Require a matched KF5* module (SMBIOS Type 17, or cached sysfs SPD / udev / EDAC) before opening SMBus.
+    /// Unreadable DMI does not bypass this. Set false only to opt in to probing without module identity.
+    /// </summary>
     public bool RequireSmbiosMatch { get; set; } = true;
 }
 

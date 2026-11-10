@@ -12,7 +12,10 @@ internal sealed record KrakenModel(
     int LcdHeight,
     byte[] PumpHeader,
     byte[] FanHeader,
-    bool LcdExperimental = false);
+    bool LcdExperimental = false,
+    int RgbRingLeds = 0);
+
+internal sealed record KrakenX3Model(int ProductId, string Name);
 
 internal sealed record Hue2Model(int ProductId, string Name, int FanChannels, int LedChannels);
 
@@ -33,8 +36,15 @@ internal static class NzxtCatalog
         [0x3008] = new(0x3008, "NZXT Kraken Z (Z53/Z63/Z73)", 320, 320, KrakenZ3Pump, KrakenZ3Fan),
         [0x300C] = new(0x300C, "NZXT Kraken 2023 Elite", 640, 640, Kraken2023Pump, Kraken2023Fan, LcdExperimental: true),
         [0x300E] = new(0x300E, "NZXT Kraken 2023", 240, 240, Kraken2023Pump, Kraken2023Fan),
-        [0x3012] = new(0x3012, "NZXT Kraken 2024 Elite RGB", 640, 640, Kraken2023Pump, Kraken2023Fan, LcdExperimental: true),
+        [0x3012] = new(0x3012, "NZXT Kraken 2024 Elite RGB", 640, 640, Kraken2023Pump, Kraken2023Fan, LcdExperimental: true, RgbRingLeds: NzxtProtocol.KrakenEliteRingLeds),
         [0x3014] = new(0x3014, "NZXT Kraken 2024 Plus", 240, 240, Kraken2023Pump, Kraken2023Fan),
+    };
+
+    /// <summary>Kraken X3 coolers (X53/X63/X73). Ring and logo RGB, pump control, no LCD.</summary>
+    public static readonly IReadOnlyDictionary<int, KrakenX3Model> KrakenX3Devices = new Dictionary<int, KrakenX3Model>
+    {
+        [0x2007] = new(0x2007, "NZXT Kraken X3 (X53/X63/X73)"),
+        [0x2014] = new(0x2014, "NZXT Kraken X3 (X53/X63/X73)"),
     };
 
     public static readonly IReadOnlyDictionary<int, Hue2Model> Hue2Devices = new Dictionary<int, Hue2Model>

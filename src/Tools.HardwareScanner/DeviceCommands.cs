@@ -4,11 +4,9 @@ using HidSharp;
 using Microsoft.Extensions.DependencyInjection;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
-using RigForge.Infrastructure.CrossPlatform.Asus;
 using RigForge.Infrastructure.CrossPlatform.Diagnostics;
 using RigForge.Infrastructure.CrossPlatform.Hid;
 using RigForge.Infrastructure.CrossPlatform.Kingston;
-using RigForge.Infrastructure.CrossPlatform.Nzxt;
 using RigForge.Infrastructure.CrossPlatform.Smbus;
 using RigForge.Infrastructure.Linux.Udev;
 
@@ -135,11 +133,7 @@ internal static class UdevCommand
 {
     public static int Run(FileInfo? output)
     {
-        var rules = UdevRulesGenerator.Generate(
-        [
-            (NzxtCatalog.VendorId, null, "NZXT: Kraken coolers, RGB & Fan Controllers, HUE 2"),
-            (AuraUsbProtocol.VendorId, AuraUsbProtocol.MainboardProductIds.ToArray(), "ASUS Aura USB mainboard controllers"),
-        ]);
+        var rules = UdevRulesGenerator.GenerateDefault();
 
         if (output is null)
         {
@@ -234,6 +228,8 @@ internal static class DumpCommand
     {
         await using var services = ScannerHost.Build(verbose);
         var devices = await ScannerHost.ProbeAllAsync(services, cancellationToken);
+        var manifests = services.GetRequiredService<IDeviceManifestCatalog>();
+        var knownVendors = manifests.All.Select(static manifest => manifest.VendorId).ToHashSet();
         try
         {
             var report = new
@@ -243,13 +239,14 @@ internal static class DumpCommand
                 Runtime = Environment.Version.ToString(),
                 Conflicts = ConflictingSoftwareDetector.Detect(),
                 Hid = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID is NzxtCatalog.VendorId or AuraUsbProtocol.VendorId)
+                    .Where(d => knownVendors.Contains(d.VendorID))
                     .Select(d => new
                     {
                         VendorId = $"{d.VendorID:X4}",
                         ProductId = $"{d.ProductID:X4}",
                         Product = d.SafeProductName(),
                         Manufacturer = d.SafeManufacturer(),
+                        Support = manifests.FindUsb(d.VendorID, d.ProductID)?.Name ?? "not in the built-in manifest",
                         InputReport = d.GetMaxInputReportLength(),
                         OutputReport = d.GetMaxOutputReportLength(),
                         FeatureReport = d.GetMaxFeatureReportLength(),

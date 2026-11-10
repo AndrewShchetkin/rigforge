@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using RigForge.Infrastructure.CrossPlatform.Manifests;
 
 namespace RigForge.Infrastructure.Linux.Udev;
 
@@ -11,6 +12,23 @@ namespace RigForge.Infrastructure.Linux.Udev;
 public static class UdevRulesGenerator
 {
     public const string RecommendedPath = "/etc/udev/rules.d/60-rigforge.rules";
+
+    /// <summary>Rules for every built-in USB manifest, plus QMK/Vial raw HID and chipset i2c-dev.</summary>
+    public static string GenerateDefault()
+    {
+        var catalog = new JsonDeviceManifestCatalog(string.Empty);
+        var devices = catalog.All
+            .Where(static manifest => manifest.VendorId > 0 && manifest.ProductId > 0)
+            .GroupBy(static manifest => manifest.VendorId)
+            .OrderBy(static group => group.Key)
+            .Select(group => (
+                VendorId: group.Key,
+                ProductIds: (IReadOnlyCollection<int>?)group.Select(static manifest => manifest.ProductId).Distinct().ToArray(),
+                Description: Describe(group.Key, group.First().Vendor)))
+            .ToArray();
+
+        return Generate(devices);
+    }
 
     /// <summary>Returns the rules with LF line endings regardless of the OS the generator runs on.</summary>
     public static string Generate(IEnumerable<(int VendorId, IReadOnlyCollection<int>? ProductIds, string Description)> devices)
@@ -33,14 +51,38 @@ public static class UdevRulesGenerator
             Line(builder);
         }
 
-        Line(builder, "# Chipset SMBus / i2c-dev adapters (Kingston FURY DDR5 DRAM RGB).");
+        Line(builder, "# QMK / Vial raw HID on interface 1 (usage page 0xFF60 is not a udev match).");
+        Line(builder, "KERNEL==\"hidraw*\", SUBSYSTEM==\"hidraw\", ENV{ID_USB_INTERFACE_NUM}==\"01\", TAG+=\"uaccess\"");
+        Line(builder);
+        Line(builder, "# Chipset SMBus / i2c-dev adapters (DDR4/DDR5 RGB DRAM).");
         Line(builder, "KERNEL==\"i2c-[0-9]*\", SUBSYSTEM==\"i2c-dev\", TAG+=\"uaccess\"");
+        Line(builder);
+        Line(builder, "# Read-only SMBIOS/DMI so a non-root process can match DIMM identity before any SMBus traffic.");
+        Line(builder, "# Kingston writes 0x08=0x53 and ENE writes pointer register 0x00; without a matched module the bus stays closed.");
+        Line(builder, "SUBSYSTEM==\"dmi\", KERNEL==\"id\", MODE=\"0444\", TAG+=\"uaccess\"");
+        Line(builder, "ACTION==\"add\", SUBSYSTEM==\"dmi\", KERNEL==\"id\", RUN+=\"/bin/chmod a+r /sys/firmware/dmi/tables/DMI /sys/firmware/dmi/tables/smbios_entry_point\"");
         Line(builder);
         Line(builder, "# Optional: allow members of group \"rigforge\" to drive motherboard PWM outputs through hwmon.");
         Line(builder, "# ACTION==\"add\", SUBSYSTEM==\"hwmon\", RUN+=\"/bin/sh -c 'chgrp rigforge /sys%p/pwm* && chmod g+w /sys%p/pwm*'\"");
 
         return builder.ToString();
     }
+
+    private static string Describe(int vendorId, string vendor) => vendorId switch
+    {
+        0x1E71 => "NZXT: Kraken coolers, RGB & Fan Controllers, HUE 2",
+        0x0B05 => "ASUS Aura USB mainboard controllers",
+        0x1B1C => "Corsair Lighting Node and Commander Core",
+        0x1462 => "MSI Mystic Light",
+        0x0DB0 => "MSI Mystic Light (alternate vendor)",
+        0x048D => "Gigabyte RGB Fusion 2.0",
+        0x26CE => "ASRock Polychrome USB",
+        0x0CF2 => "Lian Li UNI HUB",
+        0x2516 => "Cooler Master ARGB",
+        0x046D => "Logitech Lightsync",
+        0x1532 => "Razer Chroma",
+        _ => vendor,
+    };
 
     private static void Line(StringBuilder builder, string text = "") => builder.Append(text).Append('\n');
 }

@@ -1,11 +1,13 @@
 {
   "info": {
     "name": "RigForge daemon",
-    "description": "REST surface of the RigForge daemon (http://127.0.0.1:5757). The UI uses the SignalR hub at /hubs/control; these endpoints share the same validated profile commands. Validation errors return RFC 7807 problem details.",
+    "description": "REST surface of the RigForge daemon (http://127.0.0.1:5757). The UI uses the SignalR hub at /hubs/control; these endpoints share the same validated profile commands. Validation errors return RFC 7807 problem details. Identify returns 202 Accepted. An empty zoneId blinks every zone of the device.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "http://127.0.0.1:5757" },
+    { "key": "deviceId", "value": "nzxt:300e:SERIAL" },
+    { "key": "zoneId", "value": "" },
     { "key": "curveId", "value": "nzxt:300e:SERIAL:pump" }
   ],
   "item": [
@@ -16,6 +18,33 @@
         { "name": "Full state", "request": { "method": "GET", "url": "{{baseUrl}}/api/state" } },
         { "name": "Devices", "request": { "method": "GET", "url": "{{baseUrl}}/api/devices" } },
         { "name": "Rescan devices", "request": { "method": "POST", "url": "{{baseUrl}}/api/devices/rescan" } },
+        {
+          "name": "Performance",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/performance",
+            "description": "Process CPU, memory, GC, and lighting render telemetry."
+          }
+        },
+        {
+          "name": "Identify device",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/{{deviceId}}/identify?zoneId={{zoneId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices", "{{deviceId}}", "identify"],
+              "query": [
+                {
+                  "key": "zoneId",
+                  "value": "{{zoneId}}",
+                  "description": "Optional. Leave empty to blink the whole device for about 2 seconds at 4 Hz."
+                }
+              ]
+            },
+            "description": "202 Accepted. Blinks one device, or one of its zones, cyan and dim at 4 Hz."
+          }
+        },
         { "name": "Telemetry", "request": { "method": "GET", "url": "{{baseUrl}}/api/telemetry" } },
         { "name": "OpenAPI document (Development)", "request": { "method": "GET", "url": "{{baseUrl}}/openapi/v1.json" } }
       ]
@@ -25,6 +54,40 @@
       "item": [
         { "name": "Get profile", "request": { "method": "GET", "url": "{{baseUrl}}/api/profile" } },
         {
+          "name": "Import profile",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Replaces the whole profile, including per-device displays and color corrections.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemaVersion\": 2,\n  \"canvas\": {\n    \"width\": 320,\n    \"height\": 180,\n    \"placements\": [\n      {\n        \"deviceId\": \"asus-aura:19af:SERIAL\",\n        \"zoneId\": \"argb1\",\n        \"x\": 20,\n        \"y\": 140,\n        \"width\": 280,\n        \"height\": 12,\n        \"rotation\": 0,\n        \"enabled\": true,\n        \"ledCount\": 60\n      }\n    ]\n  },\n  \"effect\": {\n    \"effectId\": \"gradient\",\n    \"enabled\": true,\n    \"brightness\": 0.8,\n    \"targetFps\": 60,\n    \"parameters\": {\n      \"colors\": [\"#FF0080\", \"#00C8FF\"],\n      \"speed\": 1.5,\n      \"angle\": 45\n    }\n  },\n  \"fanCurves\": [],\n  \"lcd\": {\n    \"mode\": \"Dashboard\",\n    \"brightness\": 80,\n    \"rotation\": 0,\n    \"sensorSelectors\": [\"role:CpuTemperature\", \"role:GpuTemperature\", \"role:LiquidTemperature\"],\n    \"accentColor\": \"#8B5CF6\",\n    \"framesPerSecond\": 2\n  },\n  \"displays\": {\n    \"nzxt:300e:SERIAL\": {\n      \"mode\": \"SingleSensor\",\n      \"brightness\": 60,\n      \"rotation\": 0,\n      \"sensorSelectors\": [\"role:LiquidTemperature\"],\n      \"accentColor\": \"#8B5CF6\",\n      \"framesPerSecond\": 2\n    }\n  },\n  \"colorCorrections\": [\n    {\n      \"deviceId\": \"asus-aura:19af:SERIAL\",\n      \"gamma\": 1.2,\n      \"whiteBalance\": \"#FFE8D0\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Upsert display",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/displays/{{deviceId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Creates or replaces the LCD settings for one device. Other screens keep RigProfile.Lcd.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"SingleSensor\",\n  \"brightness\": 60,\n  \"rotation\": 0,\n  \"sensorSelectors\": [\"role:LiquidTemperature\"],\n  \"accentColor\": \"#8B5CF6\",\n  \"framesPerSecond\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Remove display",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/profile/displays/{{deviceId}}",
+            "description": "Removes a per-device LCD override. The screen falls back to the shared LCD settings."
+          }
+        },
+        {
           "name": "Update effect",
           "request": {
             "method": "PUT",
@@ -32,7 +95,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"effectId\": \"gradient\",\n  \"brightness\": 0.8,\n  \"targetFps\": 60,\n  \"parameters\": {\n    \"colors\": [\"#FF0080\", \"#00C8FF\"],\n    \"speed\": 1.5,\n    \"angle\": 45\n  }\n}"
+              "raw": "{\n  \"effectId\": \"gradient\",\n  \"enabled\": true,\n  \"brightness\": 0.8,\n  \"targetFps\": 60,\n  \"parameters\": {\n    \"colors\": [\"#FF0080\", \"#00C8FF\"],\n    \"speed\": 1.5,\n    \"angle\": 45\n  }\n}"
             }
           }
         },
@@ -72,7 +135,21 @@
             }
           }
         },
-        { "name": "Remove fan curve", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/fan-curves/{{curveId}}" } }
+        { "name": "Remove fan curve", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/fan-curves/{{curveId}}" } },
+        {
+          "name": "Upsert color correction",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/color-corrections/{{deviceId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Gamma 0.5..3 and white balance #RRGGBB. The route deviceId overwrites the body.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"gamma\": 1.2,\n  \"whiteBalance\": \"#FFE8D0\"\n}"
+            }
+          }
+        },
+        { "name": "Remove color correction", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/color-corrections/{{deviceId}}" } }
       ]
     }
   ]

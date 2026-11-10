@@ -3,9 +3,9 @@ import { memo, useCallback, useMemo } from 'react';
 import { Group, Rect, Text } from 'react-konva';
 import type { RgbZoneDto, ZonePlacement } from '../../api/contracts.ts';
 import { zoneLeds } from '../../lib/ledLayout.ts';
-import { roundTo } from '../../lib/math.ts';
-import { MIN_ZONE_SIZE, normalizeRotation, type PlacementPatch } from './layoutModel.ts';
+import { clampOrigin, snapPlacement, type PlacementPatch, type SnapStep } from './layoutModel.ts';
 import { ZoneLeds } from './ZoneLeds.tsx';
+import { ZoneSilhouette } from './ZoneSilhouette.tsx';
 
 const LABEL_PX = 11;
 const PADDING_PX = 3;
@@ -18,6 +18,16 @@ function setCursor(event: Konva.KonvaEventObject<MouseEvent>, cursor: string) {
   }
 }
 
+function joinedLabel(...parts: Array<string | null | undefined>): string {
+  const names: string[] = [];
+  for (const part of parts) {
+    if (part && part.trim() !== '') {
+      names.push(part.trim());
+    }
+  }
+  return names.join(' ');
+}
+
 interface ZoneNodeProps {
   /** Placement key, including the segment id when the zone is split. */
   zoneKey: string;
@@ -26,10 +36,16 @@ interface ZoneNodeProps {
   placement: ZonePlacement;
   /** Undefined when the placement refers to a zone the daemon does not currently report. */
   zone: RgbZoneDto | undefined;
+  deviceName?: string;
   selected: boolean;
-  /** Stage pixels per canvas unit. */
+  /** Fit-to-width stage pixels per canvas unit, before the user zoom. */
   scale: number;
-  dragBound: (position: Konva.Vector2d) => Konva.Vector2d;
+  zoom: number;
+  panX: number;
+  panY: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  snap: SnapStep;
   ledOffset: number;
   onSelect: (key: string) => void;
   onChange: (key: string, patch: PlacementPatch) => void;
@@ -42,9 +58,15 @@ export const ZoneNode = memo(function ZoneNode({
   previewKey,
   placement,
   zone,
+  deviceName,
   selected,
   scale,
-  dragBound,
+  zoom,
+  panX,
+  panY,
+  canvasWidth,
+  canvasHeight,
+  snap,
   ledOffset,
   onSelect,
   onChange,
@@ -57,10 +79,33 @@ export const ZoneNode = memo(function ZoneNode({
     [zone, ledCount, topology, matrixColumns, serpentine],
   );
   const padding = PADDING_PX / scale;
+  const effectiveTopology = topology ?? zone?.topology ?? 'Linear';
+
+  // dragBoundFunc speaks absolute stage pixels. Convert through pan and zoom, then clamp in canvas units.
+  const dragBound = useCallback(
+    (position: Konva.Vector2d) => {
+      const viewScale = scale * zoom;
+      if (!(viewScale > 0)) {
+        return position;
+      }
+      const origin = clampOrigin(
+        (position.x - panX) / viewScale,
+        (position.y - panY) / viewScale,
+        width,
+        height,
+        rotation,
+        canvasWidth,
+        canvasHeight,
+      );
+      return { x: panX + origin.x * viewScale, y: panY + origin.y * viewScale };
+    },
+    [scale, zoom, panX, panY, width, height, rotation, canvasWidth, canvasHeight],
+  );
 
   const handleDragEnd = (event: Konva.KonvaEventObject<DragEvent>) => {
     const node = event.currentTarget;
-    onChange(zoneKey, { x: roundTo(node.x(), 2), y: roundTo(node.y(), 2) });
+    const placed = snapPlacement(placement, { x: node.x(), y: node.y() }, canvasWidth, canvasHeight, snap);
+    onChange(zoneKey, { x: placed.x, y: placed.y });
   };
 
   // The Transformer resizes by scaling the group; fold the scale back into width/height.
@@ -69,12 +114,25 @@ export const ZoneNode = memo(function ZoneNode({
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
     node.scale({ x: 1, y: 1 });
+    const placed = snapPlacement(
+      placement,
+      {
+        x: node.x(),
+        y: node.y(),
+        width: width * Math.abs(scaleX),
+        height: height * Math.abs(scaleY),
+        rotation: node.rotation(),
+      },
+      canvasWidth,
+      canvasHeight,
+      snap,
+    );
     onChange(zoneKey, {
-      x: roundTo(node.x(), 2),
-      y: roundTo(node.y(), 2),
-      width: roundTo(Math.max(MIN_ZONE_SIZE, width * scaleX), 2),
-      height: roundTo(Math.max(MIN_ZONE_SIZE, height * scaleY), 2),
-      rotation: normalizeRotation(node.rotation()),
+      x: placed.x,
+      y: placed.y,
+      width: placed.width,
+      height: placed.height,
+      rotation: placed.rotation,
     });
   };
 
@@ -86,7 +144,12 @@ export const ZoneNode = memo(function ZoneNode({
       rotation={rotation}
       draggable
       dragBoundFunc={dragBound}
-      onMouseDown={() => onSelect(zoneKey)}
+      onMouseDown={(event) => {
+        if (event.evt.button !== 0) {
+          return;
+        }
+        onSelect(zoneKey);
+      }}
       onTouchStart={() => onSelect(zoneKey)}
       onDragEnd={handleDragEnd}
       onTransformEnd={handleTransformEnd}
@@ -102,6 +165,16 @@ export const ZoneNode = memo(function ZoneNode({
         strokeScaleEnabled={false}
         dash={ZONE_DASH}
         opacity={enabled ? 1 : 0.4}
+      />
+      <ZoneSilhouette
+        topology={effectiveTopology}
+        name={joinedLabel(name, zone?.name, deviceName)}
+        width={width}
+        height={height}
+        leds={leds}
+        matrixColumns={matrixColumns}
+        ledCount={leds.length > 0 ? leds.length : (ledCount ?? zone?.ledCount ?? 0)}
+        dimmed={!enabled}
       />
       <Text
         x={padding}

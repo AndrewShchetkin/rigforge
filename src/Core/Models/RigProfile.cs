@@ -15,6 +15,12 @@ public sealed record RigProfile
 
     public LcdSettings Lcd { get; init; } = new();
 
+    /// <summary>
+    /// Per-device LCD settings keyed by device id. <see cref="Lcd"/> remains the fallback for devices without an entry.
+    /// </summary>
+    public IReadOnlyDictionary<string, LcdSettings> Displays { get; init; } =
+        new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
+
     /// <summary>Optional gamma and white balance, one entry per device.</summary>
     public IReadOnlyList<DeviceColorCorrection> ColorCorrections { get; init; } = [];
 }

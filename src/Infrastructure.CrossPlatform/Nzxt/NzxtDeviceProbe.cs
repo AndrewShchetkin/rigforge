@@ -64,9 +64,33 @@ internal sealed partial class NzxtDeviceProbe(
                             manifest.Display?.Height ?? kraken?.LcdHeight ?? 240,
                             manifest.PumpHeader ?? kraken?.PumpHeader ?? [0x01, 0x01, 0x00],
                             manifest.FanHeader ?? kraken?.FanHeader ?? [0x02, 0x01, 0x01],
-                            manifest.Display?.Experimental ?? kraken?.LcdExperimental ?? false)
+                            manifest.Display?.Experimental ?? kraken?.LcdExperimental ?? false,
+                            kraken?.RgbRingLeds ?? 0)
                         : kraken!;
+                    var manifestLeds = manifest?.LedChannels ?? 0;
+                    var ringLeds = manifestLeds > 0
+                        ? manifestLeds
+                        : model.ProductId == 0x3012 && model.RgbRingLeds == 0
+                            ? NzxtProtocol.KrakenEliteRingLeds
+                            : model.RgbRingLeds;
+                    if (ringLeds > 0 && ringLeds != model.RgbRingLeds)
+                    {
+                        model = model with { RgbRingLeds = Math.Clamp(ringLeds, 1, NzxtProtocol.MaxLedsPerChannel) };
+                    }
+
                     devices.Add(NzxtKrakenDevice.Open(hid, model, id, bulkFactory, settings.Nzxt, settings.DryRun, logger));
+                }
+                else if (NzxtCatalog.KrakenX3Devices.ContainsKey(hid.ProductID) || manifest?.Protocol == DeviceProtocolFamily.NzxtKrakenX3)
+                {
+                    var model = NzxtCatalog.KrakenX3Devices.TryGetValue(hid.ProductID, out var known)
+                        ? known
+                        : new KrakenX3Model(hid.ProductID, manifest?.Name ?? $"NZXT Kraken X3 0x{hid.ProductID:X4}");
+                    if (manifest?.Protocol == DeviceProtocolFamily.NzxtKrakenX3 && !string.IsNullOrWhiteSpace(manifest.Name))
+                    {
+                        model = model with { Name = manifest.Name };
+                    }
+
+                    devices.Add(NzxtKrakenX3Device.Open(hid, model, id, settings.DryRun));
                 }
                 else if (NzxtCatalog.Hue2Devices.TryGetValue(hid.ProductID, out var hue2) || manifest?.Protocol == DeviceProtocolFamily.NzxtHue2)
                 {

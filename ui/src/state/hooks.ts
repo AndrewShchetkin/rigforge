@@ -1,5 +1,5 @@
 import { use, useEffect, useMemo, useSyncExternalStore, type Context } from 'react';
-import type { PreviewChannel, SensorReadingDto, SystemStateDto } from '../api/contracts.ts';
+import type { PerformanceMetricsDto, PreviewChannel, SensorReadingDto, SystemStateDto } from '../api/contracts.ts';
 import type { ConnectionStatus } from '../api/daemonClient.ts';
 import { sameSensorOptions, temperatureSensorOptions, type SensorOption } from '../lib/sensors.ts';
 import { useStableValue } from '../lib/useStableValue.ts';
@@ -9,6 +9,7 @@ import {
   DaemonStateContext,
   CanvasPreviewContext,
   LedPreviewContext,
+  PerformanceContext,
   SystemContext,
 } from './context.ts';
 import type { DaemonApi } from './daemonApi.ts';
@@ -69,6 +70,12 @@ export function useSensorOptions(): readonly SensorOption[] {
 export function useLedPreview(zoneKey: string): Uint8Array | null {
   const store = useRequiredContext(LedPreviewContext, 'useLedPreview');
   return useSyncExternalStore(store.subscribe, () => store.getZoneColors(zoneKey));
+}
+
+/** Latest ~1 Hz performance sample. Re-renders only the calling component. */
+export function usePerformance(): PerformanceMetricsDto | null {
+  const store = useRequiredContext(PerformanceContext, 'usePerformance');
+  return useSyncExternalStore(store.subscribe, store.getSnapshot);
 }
 
 /** The canvas JPEG store. Subscribers redraw the image themselves; this hook does not re-render on frames. */

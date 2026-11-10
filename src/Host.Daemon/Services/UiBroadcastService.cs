@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Microsoft.AspNetCore.SignalR;
 using RigForge.Application.AioDisplay;
+using RigForge.Application.Diagnostics;
 using RigForge.Application.Cooling;
 using RigForge.Application.Devices;
 using RigForge.Application.Effects;
@@ -26,6 +27,7 @@ internal sealed partial class UiBroadcastService(
     LcdRenderEngine lcd,
     ProfileService profiles,
     DeviceManager devices,
+    PerformanceMonitor performance,
     ILogger<UiBroadcastService> logger) : BackgroundService
 {
     private static readonly TimeSpan LedPreviewInterval = TimeSpan.FromMilliseconds(50);
@@ -109,6 +111,7 @@ internal sealed partial class UiBroadcastService(
         if (clients.ClientCount > 0)
         {
             _ = SendAsync(hub.Clients.All.Telemetry(DtoMapper.ToDto(snapshot)));
+            _ = SendAsync(hub.Clients.All.Performance(DtoMapper.ToDto(performance.Capture())));
         }
     }
 

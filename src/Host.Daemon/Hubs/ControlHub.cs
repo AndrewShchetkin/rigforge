@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
 using RigForge.Application.Devices;
+using RigForge.Application.Effects;
 using RigForge.Application.Profiles;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
@@ -15,7 +16,8 @@ public sealed class ControlHub(
     SystemStateBuilder state,
     ProfileService profiles,
     DeviceManager devices,
-    ClientRegistry clients) : Hub<IControlClient>
+    ClientRegistry clients,
+    EffectRenderEngine effects) : Hub<IControlClient>
 {
     public override Task OnConnectedAsync()
     {
@@ -51,6 +53,42 @@ public sealed class ControlHub(
 
     public Task<SystemStateDto> RemoveColorCorrection(string deviceId) =>
         ApplyAsync(Required(deviceId, nameof(deviceId)), (p, id, ct) => p.RemoveColorCorrectionAsync(id, ct));
+
+    public Task IdentifyDevice(string deviceId, string? zoneId = null)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            throw new HubException("'deviceId' is required.");
+        }
+
+        effects.TriggerIdentify(deviceId, zoneId);
+        return Task.CompletedTask;
+    }
+
+    public RigProfile ExportProfile() => profiles.Current;
+
+    public Task<SystemStateDto> ImportProfile(RigProfile profile) =>
+        ApplyAsync(Required(profile, nameof(profile)), (p, imported, ct) => p.ReplaceProfileAsync(imported, ct));
+
+    public Task<SystemStateDto> UpsertDisplay(string deviceId, LcdSettings lcd)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            throw new HubException("'deviceId' is required.");
+        }
+
+        return ApplyAsync(Required(lcd, nameof(lcd)), (p, settings, ct) => p.UpsertDisplayAsync(deviceId, settings, ct));
+    }
+
+    public Task<SystemStateDto> RemoveDisplay(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            throw new HubException("'deviceId' is required.");
+        }
+
+        return ApplyAsync(deviceId, (p, id, ct) => p.RemoveDisplayAsync(id, ct));
+    }
 
     public async Task<SystemStateDto> RescanDevices()
     {

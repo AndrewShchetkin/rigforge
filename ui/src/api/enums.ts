@@ -1,5 +1,9 @@
 import type {
   DeviceCapability,
+  DeviceSupportStatus,
+  EffectCategory,
+  EffectParameterKind,
+  EffectRenderMode,
   FanChannelKind,
   FanControlMode,
   LcdMode,
@@ -44,3 +48,18 @@ export const FAN_CONTROL_MODES = ['Curve', 'Fixed'] as const satisfies readonly 
 export const LCD_MODES = ['Dashboard', 'SingleSensor', 'Graph', 'BuiltInLiquid'] as const satisfies readonly LcdMode[];
 
 export const LCD_ROTATIONS = [0, 90, 180, 270] as const satisfies readonly LcdSettings['rotation'][];
+
+export const EFFECT_RENDER_MODES = ['Sleeping', 'Blackout', 'DirectSampling', 'CanvasRaster'] as const satisfies readonly EffectRenderMode[];
+
+export const DEVICE_SUPPORT_STATUSES = ['Supported', 'TelemetryOnly', 'Unmanaged'] as const satisfies readonly DeviceSupportStatus[];
+
+export const EFFECT_CATEGORIES = ['Flowing', 'Spatial', 'Reactive', 'Static', 'Custom'] as const satisfies readonly EffectCategory[];
+
+export const EFFECT_PARAMETER_KINDS = [
+  'ColorList',
+  'FloatRange',
+  'SensorSelector',
+  'Boolean',
+  'IntRange',
+  'Select',
+] as const satisfies readonly EffectParameterKind[];

@@ -9,11 +9,13 @@ import {
   DaemonApiContext,
   DaemonStateContext,
   LedPreviewContext,
+  PerformanceContext,
   SystemContext,
 } from './context.ts';
 import { createCanvasPreviewStore } from './canvasPreviewStore.ts';
 import { createDaemonApi, type DaemonApiSink } from './daemonApi.ts';
 import { createLedPreviewStore } from './ledPreviewStore.ts';
+import { createPerformanceStore } from './performanceStore.ts';
 import { daemonReducer, initialDaemonState } from './reducer.ts';
 
 /** Owns the hub connection and exposes daemon state, the API facade and the LED preview store. */
@@ -22,12 +24,16 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   const [client] = useState(() => new DaemonClient());
   const [ledPreview] = useState(createLedPreviewStore);
   const [canvasPreview] = useState(createCanvasPreviewStore);
+  const [performance] = useState(createPerformanceStore);
   const [state, dispatch] = useReducer(daemonReducer, initialDaemonState);
 
   const sink = useMemo<DaemonApiSink>(
     () => ({
       receiveSystem: (system) => {
         checkSystemState(system);
+        if (system.performance) {
+          performance.publish(system.performance);
+        }
         dispatch({ type: 'systemReceived', system });
       },
       clearPreview: (channel) => {
@@ -39,7 +45,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         }
       },
     }),
-    [canvasPreview, ledPreview],
+    [canvasPreview, ledPreview, performance],
   );
 
   const api = useMemo(() => createDaemonApi(client, sink, toast), [client, sink, toast]);
@@ -55,6 +61,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       client.onConnected(loadState),
       client.on('StateChanged', sink.receiveSystem),
       client.on('Telemetry', (telemetry) => dispatch({ type: 'telemetryReceived', telemetry })),
+      client.on('Performance', performance.publish),
       client.on('FanStatus', (fanStatus) => dispatch({ type: 'fanStatusReceived', fanStatus })),
       client.on('LcdPreview', (png) => dispatch({ type: 'lcdPreviewReceived', png })),
       client.on('LedPreview', ledPreview.publish),
@@ -67,19 +74,21 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       }
       void client.stop();
     };
-  }, [canvasPreview, client, ledPreview, sink, toast]);
+  }, [canvasPreview, client, ledPreview, performance, sink, toast]);
 
   return (
     <DaemonApiContext value={api}>
-      <LedPreviewContext value={ledPreview}>
-        <CanvasPreviewContext value={canvasPreview}>
-          <ConnectionContext value={state.connection}>
-            <SystemContext value={state.system}>
-              <DaemonStateContext value={state}>{children}</DaemonStateContext>
-            </SystemContext>
-          </ConnectionContext>
-        </CanvasPreviewContext>
-      </LedPreviewContext>
+      <PerformanceContext value={performance}>
+        <LedPreviewContext value={ledPreview}>
+          <CanvasPreviewContext value={canvasPreview}>
+            <ConnectionContext value={state.connection}>
+              <SystemContext value={state.system}>
+                <DaemonStateContext value={state}>{children}</DaemonStateContext>
+              </SystemContext>
+            </ConnectionContext>
+          </CanvasPreviewContext>
+        </LedPreviewContext>
+      </PerformanceContext>
     </DaemonApiContext>
   );
 }

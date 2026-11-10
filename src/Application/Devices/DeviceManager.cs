@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime;
 using Microsoft.Extensions.Logging;
 using RigForge.Core.Interfaces;
@@ -77,7 +78,14 @@ public sealed partial class DeviceManager(IEnumerable<IDeviceProbe> probes, ILog
                 _byProbe[probe] = acceptedForProbe;
             }
 
-            var retainedSet = new HashSet<IHardwareDevice>(unique, ReferenceEqualityComparer.Instance);
+            await DropUnmanagedDuplicatesAsync(unique, previousSet);
+            var retainedRefs = new HashSet<IHardwareDevice>(unique, ReferenceEqualityComparer.Instance);
+            foreach (var probe in _byProbe.Keys.ToArray())
+            {
+                _byProbe[probe] = _byProbe[probe].Where(device => retainedRefs.Contains(device)).ToArray();
+            }
+
+            var retainedSet = retainedRefs;
             var removed = previous.Where(d => !retainedSet.Contains(d)).ToArray();
             if (removed.Length > 0)
             {
@@ -162,6 +170,83 @@ public sealed partial class DeviceManager(IEnumerable<IDeviceProbe> probes, ILog
         }
     }
 
+    private async Task DropUnmanagedDuplicatesAsync(List<IHardwareDevice> unique, HashSet<IHardwareDevice> previousSet)
+    {
+        var supported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in unique)
+        {
+            if (device.SupportStatus == DeviceSupportStatus.Supported && TryReadVidPid(device, out var vidPid))
+            {
+                supported.Add(vidPid);
+            }
+        }
+
+        if (supported.Count == 0)
+        {
+            return;
+        }
+
+        var created = new List<IHardwareDevice>();
+        unique.RemoveAll(device =>
+        {
+            if (device.SupportStatus != DeviceSupportStatus.Unmanaged
+                || !TryReadVidPid(device, out var vidPid)
+                || !supported.Contains(vidPid))
+            {
+                return false;
+            }
+
+            LogUnmanagedDuplicate(device.Id, vidPid);
+            if (!previousSet.Contains(device))
+            {
+                created.Add(device);
+            }
+
+            return true;
+        });
+
+        if (created.Count > 0)
+        {
+            await DisposeAllAsync(created);
+        }
+    }
+
+    private static bool TryReadVidPid(IHardwareDevice device, out string vidPid)
+    {
+        vidPid = string.Empty;
+        if (device.Properties.TryGetValue("vidPid", out var raw) && TryNormalizeVidPid(raw, out vidPid))
+        {
+            return true;
+        }
+
+        return device.Properties.TryGetValue("VendorId", out var vendor)
+            && device.Properties.TryGetValue("ProductId", out var product)
+            && TryNormalizeVidPid($"{vendor}:{product}", out vidPid);
+    }
+
+    private static bool TryNormalizeVidPid(string raw, out string vidPid)
+    {
+        vidPid = string.Empty;
+        var parts = raw.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 || !TryHex(parts[0], out var vendor) || !TryHex(parts[1], out var product))
+        {
+            return false;
+        }
+
+        vidPid = $"{vendor:X4}:{product:X4}";
+        return true;
+    }
+
+    private static bool TryHex(string text, out int value)
+    {
+        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text[2..];
+        }
+
+        return int.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
+    }
+
     private async Task DisposeAllAsync(IReadOnlyList<IHardwareDevice> devices)
     {
         foreach (var device in devices)
@@ -191,6 +276,9 @@ public sealed partial class DeviceManager(IEnumerable<IDeviceProbe> probes, ILog
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Device id {Id} reported twice; ignoring the duplicate")]
     private partial void LogDuplicateDevice(string id);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Dropped unmanaged duplicate {Id} ({VidPid}); a supported device owns that USB id")]
+    private partial void LogUnmanagedDuplicate(string id, string vidPid);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to release device {Id}")]
     private partial void LogDisposeFailed(Exception exception, string id);

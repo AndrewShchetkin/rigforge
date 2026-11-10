@@ -13,6 +13,7 @@
     <ProjectReference Include="..\..\src\Host.Daemon\RigForge.Host.Daemon.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure.CrossPlatform\RigForge.Infrastructure.CrossPlatform.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure.Linux\RigForge.Infrastructure.Linux.csproj" />
+    <ProjectReference Include="..\..\src\Tools.HardwareScanner\RigForge.Tools.HardwareScanner.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,6 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 const DAEMON_ADDRESS = '127.0.0.1:5757';
 const daemonOrigin = `http://${DAEMON_ADDRESS}`;
@@ -23,5 +23,9 @@ export default defineConfig({
     // The daemon serves the built UI in production.
     outDir: '../src/Host.Daemon/wwwroot',
     emptyOutDir: true,
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/__tests__/*.test.ts'],
   },
 });

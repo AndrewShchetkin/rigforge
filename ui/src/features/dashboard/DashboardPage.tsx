@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Card } from '../../components/ui/Card.tsx';
 import { useDaemonState, useReadings, useSystem } from '../../state/hooks.ts';
 import { FanStatusList } from './FanStatusList.tsx';
+import { PerformanceShowcase } from './PerformanceShowcase.tsx';
 import { SensorTable } from './SensorTable.tsx';
 import { StatCards } from './StatCards.tsx';
 import { buildStats } from './stats.ts';
@@ -14,6 +15,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <PerformanceShowcase />
       <StatCards stats={stats} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <Card title="Sensors" description={`${readings.length} readings, grouped by device`}>

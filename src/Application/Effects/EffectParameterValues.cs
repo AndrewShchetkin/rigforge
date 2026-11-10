@@ -10,7 +10,20 @@ public readonly record struct ParsedEffectParameters(
     float Angle,
     string? SensorSelector,
     float TemperatureLow,
-    float TemperatureHigh);
+    float TemperatureHigh)
+{
+    public IReadOnlyDictionary<string, double> Numbers { get; init; } = EmptyNumbers;
+
+    public IReadOnlyDictionary<string, bool> Booleans { get; init; } = EmptyBooleans;
+
+    public IReadOnlyDictionary<string, string> Strings { get; init; } = EmptyStrings;
+
+    private static readonly Dictionary<string, double> EmptyNumbers = new(StringComparer.Ordinal);
+
+    private static readonly Dictionary<string, bool> EmptyBooleans = new(StringComparer.Ordinal);
+
+    private static readonly Dictionary<string, string> EmptyStrings = new(StringComparer.Ordinal);
+}
 
 /// <summary>Reads typed values out of <see cref="EffectSettings.Parameters"/>, falling back to schema defaults.</summary>
 public static class EffectParameterValues
@@ -45,13 +58,66 @@ public static class EffectParameterValues
         return settings with { Parameters = filled };
     }
 
-    public static ParsedEffectParameters Parse(EffectSettings settings, EffectDescriptor descriptor) => new(
-        GetColors(settings, descriptor),
-        GetFloat(settings, descriptor, SpeedKey, fallback: 1f),
-        GetFloat(settings, descriptor, AngleKey, fallback: 0f),
-        GetString(settings, descriptor, SensorSelectorKey),
-        GetFloat(settings, descriptor, TemperatureLowKey, fallback: 35f),
-        GetFloat(settings, descriptor, TemperatureHighKey, fallback: 80f));
+    public static ParsedEffectParameters Parse(EffectSettings settings, EffectDescriptor descriptor)
+    {
+        var numbers = new Dictionary<string, double>(StringComparer.Ordinal);
+        var booleans = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var strings = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var definition in descriptor.Parameters)
+        {
+            if (!TryGetValue(settings, definition, out var element))
+            {
+                continue;
+            }
+
+            switch (definition.Kind)
+            {
+                case EffectParameterKind.FloatRange:
+                    if (element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out var number))
+                    {
+                        numbers[definition.Key] = number;
+                    }
+
+                    break;
+                case EffectParameterKind.IntRange:
+                    if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var integer))
+                    {
+                        numbers[definition.Key] = integer;
+                    }
+
+                    break;
+                case EffectParameterKind.Boolean:
+                    if (element.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    {
+                        booleans[definition.Key] = element.GetBoolean();
+                    }
+
+                    break;
+                case EffectParameterKind.Select:
+                case EffectParameterKind.SensorSelector:
+                    if (element.ValueKind == JsonValueKind.String && element.GetString() is { } text)
+                    {
+                        strings[definition.Key] = text;
+                    }
+
+                    break;
+            }
+        }
+
+        return new ParsedEffectParameters(
+            GetColors(settings, descriptor),
+            GetFloat(settings, descriptor, SpeedKey, fallback: 1f),
+            GetFloat(settings, descriptor, AngleKey, fallback: 0f),
+            GetString(settings, descriptor, SensorSelectorKey),
+            GetFloat(settings, descriptor, TemperatureLowKey, fallback: 35f),
+            GetFloat(settings, descriptor, TemperatureHighKey, fallback: 80f))
+        {
+            Numbers = numbers,
+            Booleans = booleans,
+            Strings = strings,
+        };
+    }
 
     /// <summary>The effective raw value of a parameter: the stored value, or the schema default when absent.</summary>
     public static bool TryGetValue(EffectSettings settings, EffectParameterDefinition definition, out JsonElement value)

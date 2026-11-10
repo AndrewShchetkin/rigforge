@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Mvc;
 using RigForge.Application.Devices;
+using RigForge.Application.Diagnostics;
+using RigForge.Application.Effects;
 using RigForge.Application.Profiles;
 using RigForge.Application.Telemetry;
 using RigForge.Core.Models;
@@ -41,9 +44,44 @@ public static class ApiEndpoints
             .WithName("GetTelemetry")
             .WithSummary("Latest value of every sensor.");
 
+        api.MapGet("/performance", (PerformanceMonitor monitor) => DtoMapper.ToDto(monitor.Capture()))
+            .WithName("GetPerformance")
+            .WithSummary("Process CPU, memory, GC, and lighting render telemetry.");
+
+        api.MapPost("/devices/{deviceId}/identify", (string deviceId, [FromQuery] string? zoneId, EffectRenderEngine effects) =>
+            {
+                if (string.IsNullOrWhiteSpace(deviceId))
+                {
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["deviceId"] = ["A device id is required."],
+                    });
+                }
+
+                effects.TriggerIdentify(deviceId, zoneId);
+                return Results.Accepted();
+            })
+            .WithName("IdentifyDevice")
+            .WithSummary("Blinks a device, or one of its zones, so it can be found.");
+
         api.MapGet("/profile", (ProfileService profiles) => profiles.Current)
             .WithName("GetProfile")
             .WithSummary("The active profile (layout, effect, fan curves, LCD).");
+
+        api.MapPut("/profile", (RigProfile profile, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.ReplaceProfileAsync(profile, ct)))
+            .WithName("ImportProfile")
+            .WithSummary("Replaces the whole profile.");
+
+        api.MapPut("/profile/displays/{deviceId}", (string deviceId, LcdSettings lcd, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.UpsertDisplayAsync(deviceId, lcd, ct)))
+            .WithName("UpsertDisplay")
+            .WithSummary("Creates or replaces the LCD settings for one device.");
+
+        api.MapDelete("/profile/displays/{deviceId}", (string deviceId, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.RemoveDisplayAsync(deviceId, ct)))
+            .WithName("RemoveDisplay")
+            .WithSummary("Removes a per-device LCD override.");
 
         api.MapPut("/profile/effect", (EffectSettings effect, ProfileService profiles, CancellationToken ct) =>
                 ToResult(profiles.UpdateEffectAsync(effect, ct)))

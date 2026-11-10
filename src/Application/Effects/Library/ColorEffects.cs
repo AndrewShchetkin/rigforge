@@ -12,7 +12,8 @@ internal sealed class SolidColorEffect : IEffect
         Parameters:
         [
             EffectParameterDefinition.ColorList("colors", "Color", ["#FF0080"], minColors: 1, maxColors: 1),
-        ]);
+        ],
+        Category: EffectCategory.Static);
 
     public EffectDescriptor Descriptor => Info;
 
@@ -42,7 +43,8 @@ internal sealed class BreathingEffect : IEffect
         [
             EffectParameterDefinition.ColorList("colors", "Colors", ["#FF0080", "#00C8FF"], minColors: 1, maxColors: 8),
             EffectParameterDefinition.FloatRange("speed", "Speed", defaultValue: 1, min: 0.05, max: 10, step: 0.1, unit: "×"),
-        ]);
+        ],
+        Category: EffectCategory.Flowing);
 
     private const double PeriodSeconds = 4.0;
 
@@ -81,7 +83,8 @@ internal sealed class SpectrumCycleEffect : IEffect
         Parameters:
         [
             EffectParameterDefinition.FloatRange("speed", "Speed", defaultValue: 1, min: 0.05, max: 10, step: 0.1, unit: "×"),
-        ]);
+        ],
+        Category: EffectCategory.Flowing);
 
     private const double DegreesPerSecond = 36.0;
 

@@ -2,13 +2,16 @@ using System.Globalization;
 using HidSharp;
 using RigForge.Infrastructure.CrossPlatform.Asus;
 using RigForge.Infrastructure.CrossPlatform.Hid;
+using RigForge.Infrastructure.CrossPlatform.Manifests;
 using RigForge.Infrastructure.CrossPlatform.Nzxt;
 
 namespace RigForge.Tools.HardwareScanner;
 
 internal static class HidCommand
 {
-    private static readonly int[] KnownVendors = [NzxtCatalog.VendorId, AuraUsbProtocol.VendorId];
+    private static readonly JsonDeviceManifestCatalog Catalog = new(string.Empty);
+
+    private static readonly HashSet<int> KnownVendors = Catalog.All.Select(static manifest => manifest.VendorId).ToHashSet();
 
     public static int Run(string? vendorFilter, bool allVendors)
     {
@@ -45,36 +48,27 @@ internal static class HidCommand
         return 0;
     }
 
-    private static string Describe(HidDevice device)
+    internal static string Describe(HidDevice device)
     {
+        if (Catalog.FindUsb(device.VendorID, device.ProductID) is { } manifest)
+        {
+            var screen = manifest.Display is { } display ? $", {display.Width}x{display.Height} LCD" : string.Empty;
+            return $"supported: {manifest.Name} ({manifest.Protocol}{screen})";
+        }
+
         if (device.VendorID == NzxtCatalog.VendorId)
         {
-            if (NzxtCatalog.Krakens.TryGetValue(device.ProductID, out var kraken))
-            {
-                return $"supported: {kraken.Name} (liquid temperature, pump/fan control, {kraken.LcdWidth}x{kraken.LcdHeight} LCD)";
-            }
-
-            if (NzxtCatalog.Hue2Devices.TryGetValue(device.ProductID, out var hue2))
-            {
-                return $"supported: {hue2.Name} ({hue2.FanChannels} fan / {hue2.LedChannels} LED channels)";
-            }
-
             return "NZXT device not supported yet; please share this output";
         }
 
         if (device.VendorID == AuraUsbProtocol.VendorId)
         {
-            if (!AuraUsbProtocol.MainboardProductIds.Contains(device.ProductID))
-            {
-                return "ASUS device, not an Aura mainboard controller (add its PID to Hardware:Asus:ExtraProductIds if it is one)";
-            }
-
-            return device.HasUsagePage(AuraUsbProtocol.UsagePage)
-                ? "supported: ASUS Aura USB mainboard controller (Aura collection 0xFF72)"
-                : "ASUS Aura controller, secondary HID collection (ignored)";
+            return "ASUS device, not an Aura mainboard controller (add its PID to Hardware:Asus:ExtraProductIds if it is one)";
         }
 
-        return "-";
+        return KnownVendors.Contains(device.VendorID)
+            ? "known RGB vendor, product not in the built-in manifest"
+            : "-";
     }
 
     private static string Fallback(string value) => string.IsNullOrEmpty(value) ? "-" : value;

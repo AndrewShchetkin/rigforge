@@ -139,7 +139,8 @@ internal sealed class RainbowWaveEffect : WaveEffectBase
         [
             EffectParameterDefinition.FloatRange("speed", "Speed", defaultValue: 1, min: 0.05, max: 10, step: 0.1, unit: "×"),
             EffectParameterDefinition.FloatRange("angle", "Direction", defaultValue: 0, min: -360, max: 360, step: 1, unit: "°"),
-        ]);
+        ],
+        Category: EffectCategory.Flowing);
 
     private static readonly RgbColor[] Spectrum = Enumerable.Range(0, 13).Select(i => CanvasBuffer.FromHsv(i * 30 % 360, 100, 100)).ToArray();
 
@@ -160,7 +161,8 @@ internal sealed class GradientWaveEffect : WaveEffectBase
             EffectParameterDefinition.ColorList("colors", "Colors", ["#FF0080", "#00C8FF"], minColors: 2, maxColors: 8),
             EffectParameterDefinition.FloatRange("speed", "Speed", defaultValue: 1, min: 0.05, max: 10, step: 0.1, unit: "×"),
             EffectParameterDefinition.FloatRange("angle", "Direction", defaultValue: 0, min: -360, max: 360, step: 1, unit: "°"),
-        ]);
+        ],
+        Category: EffectCategory.Flowing);
 
     private IReadOnlyList<RgbColor>? _source;
     private RgbColor[] _stops = [];

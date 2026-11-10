@@ -1,13 +1,16 @@
 import { Fragment, memo, useState, type ReactNode } from 'react';
-import type { DeviceCapability, DeviceColorCorrection, DeviceDto } from '../../api/contracts.ts';
+import type { DeviceCapability, DeviceColorCorrection, DeviceDto, DeviceSupportStatus } from '../../api/contracts.ts';
 import { useToast } from '../../components/feedback/useToast.ts';
 import { Badge, type BadgeTone } from '../../components/ui/Badge.tsx';
 import { Button } from '../../components/ui/Button.tsx';
 import { Card } from '../../components/ui/Card.tsx';
 import { ColorField } from '../../components/ui/ColorField.tsx';
+import { BlinkIcon } from '../../components/ui/icons.tsx';
 import { Slider } from '../../components/ui/Slider.tsx';
+import { Spinner } from '../../components/ui/Spinner.tsx';
 import { EMPTY_VALUE } from '../../lib/format.ts';
 import { useDaemonApi } from '../../state/hooks.ts';
+import { resolveSupportStatus } from './devicesModel.ts';
 
 const CAPABILITIES: Record<DeviceCapability, { label: string; tone: BadgeTone }> = {
   Rgb: { label: 'RGB', tone: 'accent' },
@@ -21,12 +24,86 @@ function capabilityBadge(capability: DeviceCapability): { label: string; tone: B
   return CAPABILITIES[capability] ?? { label: capability, tone: 'neutral' };
 }
 
+function trimmedReason(reason: string | null): string | null {
+  const text = reason?.trim() ?? '';
+  return text.length > 0 ? text : null;
+}
+
+function canBlink(device: DeviceDto): boolean {
+  return resolveSupportStatus(device) === 'Supported' && device.capabilities.includes('Rgb');
+}
+
+function zoneBlinkLabel(zone: { id: string; name: string }): string {
+  return zone.name === zone.id ? zone.id : `${zone.name} (${zone.id})`;
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
       <h3 className="mb-2 text-xs font-semibold tracking-wide text-zinc-400 uppercase">{title}</h3>
       {children}
     </div>
+  );
+}
+
+function SupportNote({ status, reason }: { status: DeviceSupportStatus; reason: string | null }) {
+  if (status === 'Unmanaged') {
+    return (
+      <p className="rounded-md border border-dashed border-zinc-600 bg-zinc-950/70 px-3 py-2 text-xs leading-relaxed text-zinc-300">
+        {reason ??
+          'Detected on the bus. RigForge leaves this device on its own firmware until a manifest names its protocol.'}
+      </p>
+    );
+  }
+  if (status === 'TelemetryOnly' && reason) {
+    return <p className="text-xs leading-relaxed text-zinc-400">{reason}</p>;
+  }
+  return null;
+}
+
+function IdentifyButton({
+  deviceId,
+  zoneId,
+  label,
+  compact = false,
+}: {
+  deviceId: string;
+  zoneId?: string;
+  label: string;
+  compact?: boolean;
+}) {
+  const api = useDaemonApi();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const blink = async () => {
+    if (busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const flashed = await api.identifyDevice(deviceId, zoneId);
+      if (flashed) {
+        toast.success(`Flashing ${label} cyan for 2 seconds.`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button
+      size="sm"
+      variant={compact ? 'ghost' : 'secondary'}
+      aria-label={`Blink ${label}`}
+      title="Flash cyan for 2 seconds"
+      disabled={busy}
+      aria-busy={busy}
+      onClick={() => void blink()}
+    >
+      {busy ? <Spinner /> : <BlinkIcon className="size-3.5" />}
+      {compact ? 'Blink' : 'Blink / Identify'}
+    </Button>
   );
 }
 
@@ -39,22 +116,36 @@ export const DeviceCard = memo(function DeviceCard({
   device: DeviceDto;
   colorCorrection?: DeviceColorCorrection;
 }) {
+  const status = resolveSupportStatus(device);
+  const reason = trimmedReason(device.statusReason);
+  const blink = canBlink(device);
+  const unmanaged = status === 'Unmanaged';
   const properties = Object.entries(device.properties);
 
   return (
     <Card
       title={device.name}
       description={`${device.vendor} · ${device.id}`}
-      actions={device.capabilities.map((capability) => {
-        const { label, tone } = capabilityBadge(capability);
-        return (
-          <Badge key={capability} tone={tone}>
-            {label}
-          </Badge>
-        );
-      })}
+      className={unmanaged ? 'border-dashed ring-1 ring-zinc-500/60 ring-inset' : undefined}
+      actions={
+        <>
+          {status === 'TelemetryOnly' && <Badge tone="neutral">Telemetry only</Badge>}
+          {unmanaged && <Badge tone="warning">Unmanaged</Badge>}
+          {device.capabilities.map((capability) => {
+            const { label, tone } = capabilityBadge(capability);
+            return (
+              <Badge key={capability} tone={tone}>
+                {label}
+              </Badge>
+            );
+          })}
+          {blink && <IdentifyButton deviceId={device.id} label={device.name} />}
+        </>
+      }
     >
       <div className="space-y-5 text-sm">
+        <SupportNote status={status} reason={reason} />
+
         {properties.length > 0 && (
           <Section title="Properties">
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
@@ -78,17 +169,28 @@ export const DeviceCard = memo(function DeviceCard({
                     <th className={`${cell} text-right font-medium`}>LEDs</th>
                     <th className={`${cell} font-medium`}>Topology</th>
                     <th className={`${cell} font-medium`}>Resizable</th>
+                    {blink && <th className={`${cell} font-medium`}>Blink</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {device.zones.map((zone) => (
                     <tr key={zone.id} className="border-t border-zinc-800/60">
-                      <td className={`${cell} text-zinc-200`}>{zone.name}</td>
+                      <td className={`${cell} text-zinc-200`}>
+                        <span>{zone.name}</span>
+                        {zone.id !== zone.name && (
+                          <span className="ml-2 font-mono text-xs text-zinc-500">{zone.id}</span>
+                        )}
+                      </td>
                       <td className={`${cell} text-right tabular-nums`}>{zone.ledCount}</td>
                       <td className={`${cell} text-zinc-400`}>{zone.topology}</td>
                       <td className={`${cell} text-zinc-400`}>
                         {zone.isResizable ? `Yes, up to ${zone.maxLedCount}` : 'No'}
                       </td>
+                      {blink && (
+                        <td className={cell}>
+                          <IdentifyButton deviceId={device.id} zoneId={zone.id} label={zoneBlinkLabel(zone)} compact />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

@@ -4,6 +4,7 @@ import type {
   FanCurve,
   LcdSettings,
   PreviewChannel,
+  RigProfile,
   SystemStateDto,
   VirtualCanvas,
 } from '../api/contracts.ts';
@@ -25,6 +26,14 @@ export interface DaemonApi {
   removeColorCorrection: (deviceId: string) => Promise<SystemStateDto | null>;
   rescanDevices: () => Promise<SystemStateDto | null>;
   setPreview: (channel: PreviewChannel, enabled: boolean) => Promise<void>;
+  /** Flash one device, or one zone, cyan. Resolves false when the daemon rejects the call. */
+  identifyDevice: (deviceId: string, zoneId?: string | null) => Promise<boolean>;
+  /** Canonical profile from the daemon. Resolves null after an error toast. */
+  exportProfile: () => Promise<RigProfile | null>;
+  /** Replaces the saved profile. The daemon validates the document and returns the new snapshot. */
+  importProfile: (profile: RigProfile) => Promise<SystemStateDto | null>;
+  upsertDisplay: (deviceId: string, lcd: LcdSettings) => Promise<SystemStateDto | null>;
+  removeDisplay: (deviceId: string) => Promise<SystemStateDto | null>;
 }
 
 export interface DaemonApiSink {
@@ -53,6 +62,26 @@ export function createDaemonApi(client: DaemonClient, sink: DaemonApiSink, toast
     upsertColorCorrection: (correction) => mutate(() => client.invoke('UpsertColorCorrection', correction)),
     removeColorCorrection: (deviceId) => mutate(() => client.invoke('RemoveColorCorrection', deviceId)),
     rescanDevices: () => mutate(() => client.invoke('RescanDevices')),
+    identifyDevice: async (deviceId, zoneId) => {
+      try {
+        await client.invoke('IdentifyDevice', deviceId, zoneId ?? null);
+        return true;
+      } catch (error) {
+        toast.error(describeHubError(error));
+        return false;
+      }
+    },
+    exportProfile: async () => {
+      try {
+        return await client.invoke('ExportProfile');
+      } catch (error) {
+        toast.error(describeHubError(error));
+        return null;
+      }
+    },
+    importProfile: (profile) => mutate(() => client.invoke('ImportProfile', profile)),
+    upsertDisplay: (deviceId, lcd) => mutate(() => client.invoke('UpsertDisplay', deviceId, lcd)),
+    removeDisplay: (deviceId) => mutate(() => client.invoke('RemoveDisplay', deviceId)),
     setPreview: async (channel, enabled) => {
       if (!enabled) {
         sink.clearPreview(channel);

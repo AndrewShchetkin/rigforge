@@ -8,21 +8,221 @@ export const MIN_ZONE_SIZE = 2;
 export const GRID_STEP = 10;
 export const ROTATION_SNAPS = Array.from({ length: 24 }, (_, index) => index * 15);
 
+/** `0` is free placement. `5` and `10` snap drags, resizes, and nudges to that grid. */
+export type SnapStep = 0 | 5 | 10;
+
+export const SNAP_OPTIONS: readonly { readonly value: SnapStep; readonly label: string }[] = [
+  { value: 0, label: 'Free' },
+  { value: 5, label: '5 px' },
+  { value: 10, label: '10 px' },
+];
+
+export interface CanvasPreset {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+}
+
+export const CANVAS_PRESETS: readonly CanvasPreset[] = [
+  { id: '16:9', label: '320 × 180 (16:9)', width: 320, height: 180 },
+  { id: 'case', label: '240 × 240 (1:1 Case)', width: 240, height: 240 },
+  { id: 'xl', label: '400 × 225 (XL)', width: 400, height: 225 },
+  { id: 'hd', label: '480 × 270 (HD)', width: 480, height: 270 },
+];
+
+export const MIN_ZOOM = 0.5;
+export const MAX_ZOOM = 3;
+export const ZOOM_STEP = 0.25;
+
+export interface CanvasView {
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+
+export const FIT_VIEW: CanvasView = { zoom: 1, panX: 0, panY: 0 };
+
+export interface StageMetrics {
+  baseScale: number;
+  width: number;
+  height: number;
+}
+
 export type PlacementPatch = Partial<Omit<ZonePlacement, 'deviceId' | 'zoneId'>>;
 
-export function patchPlacement(canvas: VirtualCanvas, key: string, patch: PlacementPatch): VirtualCanvas {
-  return {
-    ...canvas,
-    placements: canvas.placements.map((placement) =>
-      placementKey(placement) === key ? { ...placement, ...patch } : placement,
-    ),
-  };
+export interface SnappedBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
 }
 
 /** Degrees in [0, 360), rounded to 0.01. */
 export function normalizeRotation(degrees: number): number {
   const normalized = roundTo(((degrees % 360) + 360) % 360, 2);
   return normalized >= 360 ? 0 : normalized;
+}
+
+/** Free grid (`0`) keeps hundredths. A positive grid snaps to the nearest multiple. */
+export function snapValue(value: number, step: SnapStep): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (step <= 0) {
+    return roundTo(value, 2);
+  }
+  return roundTo(Math.round(value / step) * step, 2);
+}
+
+/** Snap a zone edge without dropping below {@link MIN_ZONE_SIZE} or off a positive grid. */
+export function snapSize(value: number, step: SnapStep): number {
+  const snapped = snapValue(Math.max(value, MIN_ZONE_SIZE), step);
+  if (snapped >= MIN_ZONE_SIZE) {
+    return snapped;
+  }
+  return step >= MIN_ZONE_SIZE ? step : MIN_ZONE_SIZE;
+}
+
+export function nudgeStep(step: SnapStep, shiftKey: boolean): number {
+  if (step <= 0) {
+    return shiftKey ? 10 : 1;
+  }
+  return shiftKey ? step * 2 : step;
+}
+
+const ROTATED_EDGE = 4;
+
+function clampToRange(value: number, min: number, max: number): number {
+  const low = Math.min(min, max);
+  const high = Math.max(min, max);
+  const next = clamp(value, low, high);
+  return next === value ? value : roundTo(next, 2);
+}
+
+/**
+ * Keeps a zone origin on the canvas. Unrotated boxes stay fully inside.
+ * Rotated boxes may overhang by a quarter of their size: rotation is around the top-left corner.
+ */
+export function clampOrigin(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  rotation: number,
+  canvasWidth: number,
+  canvasHeight: number,
+): { x: number; y: number } {
+  const safeWidth = Number.isFinite(width) ? width : 0;
+  const safeHeight = Number.isFinite(height) ? height : 0;
+  const safeX = Number.isFinite(x) ? x : 0;
+  const safeY = Number.isFinite(y) ? y : 0;
+  const upright = !Number.isFinite(rotation) || normalizeRotation(rotation) === 0;
+  const minX = upright ? 0 : -safeWidth * 0.25;
+  const maxX = upright ? Math.max(0, canvasWidth - safeWidth) : canvasWidth - ROTATED_EDGE;
+  const minY = upright ? 0 : -safeHeight * 0.25;
+  const maxY = upright ? Math.max(0, canvasHeight - safeHeight) : canvasHeight - ROTATED_EDGE;
+  return {
+    x: clampToRange(safeX, minX, maxX),
+    y: clampToRange(safeY, minY, maxY),
+  };
+}
+
+export function clampPlacement<T extends ZonePlacement>(placement: T, canvasWidth: number, canvasHeight: number): T {
+  const origin = clampOrigin(
+    placement.x,
+    placement.y,
+    placement.width,
+    placement.height,
+    placement.rotation,
+    canvasWidth,
+    canvasHeight,
+  );
+  if (origin.x === placement.x && origin.y === placement.y) {
+    return placement;
+  }
+  return { ...placement, x: origin.x, y: origin.y };
+}
+
+export function matchingCanvasPreset(width: number, height: number): CanvasPreset | undefined {
+  return CANVAS_PRESETS.find((preset) => preset.width === width && preset.height === height);
+}
+
+/** Changes the canvas size and pulls any zone that would sit outside back into range. */
+export function resizeCanvas(canvas: VirtualCanvas, width: number, height: number): VirtualCanvas {
+  const nextWidth = Math.max(1, Math.round(width));
+  const nextHeight = Math.max(1, Math.round(height));
+  return {
+    width: nextWidth,
+    height: nextHeight,
+    placements: canvas.placements.map((placement) => clampPlacement(placement, nextWidth, nextHeight)),
+  };
+}
+
+export function snapPlacement(
+  placement: Pick<ZonePlacement, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
+  patch: Pick<PlacementPatch, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
+  canvasWidth: number,
+  canvasHeight: number,
+  step: SnapStep,
+): SnappedBox {
+  const width = patch.width === undefined ? placement.width : snapSize(patch.width, step);
+  const height = patch.height === undefined ? placement.height : snapSize(patch.height, step);
+  const rotation = patch.rotation === undefined ? placement.rotation : normalizeRotation(patch.rotation);
+  const x = patch.x === undefined ? placement.x : snapValue(patch.x, step);
+  const y = patch.y === undefined ? placement.y : snapValue(patch.y, step);
+  const origin = clampOrigin(x, y, width, height, rotation, canvasWidth, canvasHeight);
+  return { x: origin.x, y: origin.y, width, height, rotation };
+}
+
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) {
+    return 1;
+  }
+  return roundTo(clamp(zoom, MIN_ZOOM, MAX_ZOOM), 2);
+}
+
+/** Zooms around a pointer given in stage-container pixels. `baseScale` is fit-to-width, before zoom. */
+export function zoomViewAt(
+  view: CanvasView,
+  baseScale: number,
+  pointerX: number,
+  pointerY: number,
+  nextZoom: number,
+): CanvasView {
+  const zoom = clampZoom(nextZoom);
+  const safeBase = baseScale > 0 ? baseScale : 1;
+  const oldScale = safeBase * (view.zoom > 0 ? view.zoom : 1);
+  const newScale = safeBase * zoom;
+  const canvasX = (pointerX - view.panX) / oldScale;
+  const canvasY = (pointerY - view.panY) / oldScale;
+  return {
+    zoom,
+    panX: roundTo(pointerX - canvasX * newScale, 2),
+    panY: roundTo(pointerY - canvasY * newScale, 2),
+  };
+}
+
+/** Positive `deltaY` zooms out. `deltaMode` 1 is line units; otherwise pixels (100 px ≈ one notch). */
+export function zoomFromWheel(zoom: number, deltaY: number, deltaMode = 0): number {
+  if (!Number.isFinite(deltaY) || deltaY === 0) {
+    return clampZoom(zoom);
+  }
+  const notches = deltaMode === 1 ? clamp(deltaY, -4, 4) : clamp(deltaY / 100, -4, 4);
+  return clampZoom(zoom * Math.exp(-notches * Math.log(1.12)));
+}
+
+export function patchPlacement(canvas: VirtualCanvas, key: string, patch: PlacementPatch): VirtualCanvas {
+  return {
+    ...canvas,
+    placements: canvas.placements.map((placement) => {
+      if (placementKey(placement) !== key) {
+        return placement;
+      }
+      return clampPlacement({ ...placement, ...patch }, canvas.width, canvas.height);
+    }),
+  };
 }
 
 /** Client-side grid layout: one cell per zone, zones shrunk to fit their cell, rotation reset. */
@@ -125,13 +325,22 @@ export function addSegment(
     segmentId = `seg${segmentNumber}`;
   }
 
+  const origin = clampOrigin(
+    roundTo(selected.x + selected.width + 8, 2),
+    selected.y,
+    selected.width,
+    selected.height,
+    0,
+    canvas.width,
+    canvas.height,
+  );
   const created: ZonePlacement = {
     deviceId: selected.deviceId,
     zoneId: selected.zoneId,
     segmentId,
     name: `Segment ${segmentNumber}`,
-    x: roundTo(selected.x + selected.width + 8, 2),
-    y: selected.y,
+    x: origin.x,
+    y: origin.y,
     width: selected.width,
     height: selected.height,
     rotation: 0,

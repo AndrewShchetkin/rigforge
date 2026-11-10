@@ -7,6 +7,8 @@ public interface IControlClient
 {
     Task Telemetry(TelemetryDto telemetry);
 
+    Task Performance(PerformanceMetricsDto performance);
+
     Task FanStatus(IReadOnlyList<FanStatusDto> status);
 
     Task LedPreview(LedPreviewDto frame);

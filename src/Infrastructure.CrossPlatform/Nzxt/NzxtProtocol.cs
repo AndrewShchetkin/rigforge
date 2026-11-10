@@ -24,6 +24,19 @@ public static class NzxtProtocol
     public const int LedsPerPacket = 20;
     public const int MaxAccessoriesPerChannel = 6;
 
+    /// <summary>Kraken X3 ring channel id (liquidctl <c>0b010</c>).</summary>
+    public const byte KrakenX3RingChannel = 0x02;
+
+    /// <summary>Kraken X3 logo channel id (liquidctl <c>0b100</c>).</summary>
+    public const byte KrakenX3LogoChannel = 0x04;
+
+    public const int KrakenX3RingLeds = 8;
+    public const int KrakenX3LogoLeds = 1;
+
+    /// <summary>Kraken Elite RGB 2024 pump ring. Hue 2 channel 0 (bit mask 0x01).</summary>
+    public const int KrakenEliteRingLeds = 24;
+    public const int KrakenEliteRingChannel = 0;
+
     /// <summary>Status report interval for 0.5 s, computed like liquidctl: 1 + round((secs - 0.5) / 0.25).</summary>
     private const byte StatusInterval = 1;
 
@@ -156,6 +169,55 @@ public static class NzxtProtocol
             packet[4 + i * 3] = color.G;
             packet[5 + i * 3] = color.R;
             packet[6 + i * 3] = color.B;
+        }
+    }
+
+    /// <summary>Same framing as <see cref="Hue2PacketCount"/>: color groups of 20, then the apply packet.</summary>
+    public static int KrakenX3PacketCount(int ledCount) => Hue2PacketCount(ledCount);
+
+    /// <summary>
+    /// Kraken X3 direct ("super-fixed") packet from liquidctl. The channel byte is the channel id
+    /// (ring <c>0x02</c>, logo <c>0x04</c>), colors are GRB, and the apply packet uses the super-fixed speed scale.
+    /// </summary>
+    public static void WriteKrakenX3RgbPacket(byte channelId, int packetIndex, ReadOnlySpan<RgbColor> colors, Span<byte> packet)
+    {
+        if (packet.Length < ReportLength)
+        {
+            throw new ArgumentException($"A Kraken X3 packet buffer needs at least {ReportLength} bytes.", nameof(packet));
+        }
+
+        var count = Math.Min(colors.Length, MaxLedsPerChannel);
+        var packetCount = KrakenX3PacketCount(count);
+        if (packetIndex < 0 || packetIndex >= packetCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(packetIndex), packetIndex, "Packet index is outside the frame.");
+        }
+
+        packet.Clear();
+        packet[0] = 0x22;
+        packet[2] = channelId;
+
+        if (packetIndex == packetCount - 1)
+        {
+            packet[1] = 0xA0;
+            packet[4] = 0x01;
+            packet[7] = 0x08;
+            packet[10] = 0x80;
+            packet[12] = 0x32;
+            packet[15] = 0x01;
+            return;
+        }
+
+        var group = packetIndex;
+        packet[1] = (byte)(0x10 | group);
+        var start = group * LedsPerPacket;
+        var inPacket = Math.Min(count - start, LedsPerPacket);
+        for (var i = 0; i < inPacket; i++)
+        {
+            var color = colors[start + i];
+            packet[4 + (i * 3)] = color.G;
+            packet[5 + (i * 3)] = color.R;
+            packet[6 + (i * 3)] = color.B;
         }
     }
 

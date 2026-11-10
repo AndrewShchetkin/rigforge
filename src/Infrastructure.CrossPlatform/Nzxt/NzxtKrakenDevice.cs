@@ -11,7 +11,7 @@ namespace RigForge.Infrastructure.CrossPlatform.Nzxt;
 /// NZXT Kraken Z3 / 2023 / 2024: liquid temperature, pump and radiator fan control over HID,
 /// and the pump-head screen over USB bulk.
 /// </summary>
-internal sealed partial class NzxtKrakenDevice : IFanController, ISensorProvider, IAioLcdDevice
+internal sealed partial class NzxtKrakenDevice : IFanController, ISensorProvider, IAioLcdDevice, IRgbDevice
 {
     private const byte BulkEndpoint = 0x02;
     private const int PumpMinimumDuty = 20;
@@ -35,9 +35,10 @@ internal sealed partial class NzxtKrakenDevice : IFanController, ISensorProvider
     private readonly string _fanRpmId;
     private readonly string _fanDutyId;
     private readonly int _orientation;
+    private volatile IReadOnlyList<RgbZone> _zones = [];
     private bool _disposed;
 
-    private NzxtKrakenDevice(HidReportChannel hid, KrakenModel model, string id, string firmware, int orientation, KrakenLcdUploader? lcd, bool dryRun)
+    internal NzxtKrakenDevice(HidReportChannel hid, KrakenModel model, string id, string firmware, int orientation, KrakenLcdUploader? lcd, bool dryRun)
     {
         _hid = hid;
         _model = model;
@@ -64,9 +65,25 @@ internal sealed partial class NzxtKrakenDevice : IFanController, ISensorProvider
         {
             ["Firmware"] = firmware,
             ["ProductId"] = $"0x{model.ProductId:X4}",
-            ["UsbPath"] = hid.Device.DevicePath,
+            ["vidPid"] = UsbVidPid.Format(hid.Device, NzxtCatalog.VendorId, model.ProductId),
+            ["UsbPath"] = hid.Device?.DevicePath ?? string.Empty,
             ["Screen"] = lcd is null ? "unavailable" : $"{model.LcdWidth}x{model.LcdHeight} ({(lcd.UsesRgb565Stream ? "RGB565 stream" : "bucket upload")})",
         };
+
+        _zones = model.RgbRingLeds > 0
+            ?
+            [
+                new RgbZone
+                {
+                    Id = "ring",
+                    Name = "Ring",
+                    Topology = LedTopology.Ring,
+                    Leds = LedLayouts.Ring(Math.Clamp(model.RgbRingLeds, 1, NzxtProtocol.MaxLedsPerChannel)),
+                    IsResizable = true,
+                    MaxLedCount = NzxtProtocol.MaxLedsPerChannel,
+                },
+            ]
+            : [];
     }
 
     public string Id { get; }
@@ -76,9 +93,16 @@ internal sealed partial class NzxtKrakenDevice : IFanController, ISensorProvider
     public string Vendor => "NZXT";
 
     public DeviceCapabilities Capabilities =>
-        DeviceCapabilities.FanControl | DeviceCapabilities.Sensors | (_lcd is null ? DeviceCapabilities.None : DeviceCapabilities.Lcd);
+        DeviceCapabilities.FanControl
+        | DeviceCapabilities.Sensors
+        | (_lcd is null ? DeviceCapabilities.None : DeviceCapabilities.Lcd)
+        | (_zones.Count > 0 ? DeviceCapabilities.Rgb : DeviceCapabilities.None);
 
     public IReadOnlyDictionary<string, string> Properties => _properties;
+
+    public IReadOnlyList<RgbZone> Zones => _zones;
+
+    public int MaxFramesPerSecond => 30;
 
     public IReadOnlyList<FanChannel> Channels { get; }
 
@@ -184,6 +208,58 @@ internal sealed partial class NzxtKrakenDevice : IFanController, ISensorProvider
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _lcd.Upload(rgba.Span);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    public bool TryResizeZone(string zoneId, int ledCount)
+    {
+        if (ledCount < 1)
+        {
+            return false;
+        }
+
+        var copy = _zones.ToArray();
+        var index = Array.FindIndex(copy, zone => zone.Id == zoneId && zone.IsResizable);
+        if (index < 0 || ledCount > copy[index].MaxLedCount)
+        {
+            return false;
+        }
+
+        var zone = copy[index];
+        copy[index] = zone with
+        {
+            Leds = zone.Topology == LedTopology.Ring ? LedLayouts.Ring(ledCount) : LedLayouts.Linear(ledCount),
+        };
+        _zones = copy;
+        return true;
+    }
+
+    public ValueTask UpdateLedsAsync(ReadOnlyMemory<RgbColor> colors, CancellationToken cancellationToken)
+    {
+        if (_dryRun || _zones.Count == 0 || colors.IsEmpty)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        var count = Math.Min(_zones[0].LedCount, colors.Length);
+        if (count <= 0)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        lock (_transaction)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            Span<byte> packet = stackalloc byte[NzxtProtocol.ReportLength];
+            var frame = colors.Span[..count];
+            var packetCount = NzxtProtocol.Hue2PacketCount(count);
+            for (var packetIndex = 0; packetIndex < packetCount; packetIndex++)
+            {
+                NzxtProtocol.WriteHue2Packet(NzxtProtocol.KrakenEliteRingChannel, packetIndex, frame, packet);
+                _hid.Write(packet);
+            }
         }
 
         return ValueTask.CompletedTask;

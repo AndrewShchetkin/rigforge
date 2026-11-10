@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using RigForge.Application.Cooling;
+using RigForge.Application.Diagnostics;
 using RigForge.Application.Devices;
 using RigForge.Application.Effects;
 using RigForge.Application.Layout;
@@ -21,7 +22,8 @@ public sealed class SystemStateBuilder(
     TelemetryService telemetry,
     FanControlEngine fans,
     EffectRegistry effects,
-    CanvasLayoutService layout)
+    CanvasLayoutService layout,
+    PerformanceMonitor performance)
 {
     private static readonly TimeSpan WarningsCacheDuration = TimeSpan.FromSeconds(10);
     private static readonly string Version =
@@ -47,7 +49,8 @@ public sealed class SystemStateBuilder(
         _effects,
         DtoMapper.ToDto(telemetry.Latest),
         fans.Status.Select(DtoMapper.ToDto).ToArray(),
-        Warnings());
+        Warnings(),
+        DtoMapper.ToDto(performance.Capture()));
 
     public DaemonInfoDto BuildInfo()
     {
@@ -57,6 +60,7 @@ public sealed class SystemStateBuilder(
             Platform,
             StartedAt,
             process.PrivateMemorySize64,
+            process.WorkingSet64,
             GC.GetTotalMemory(forceFullCollection: false));
     }
 

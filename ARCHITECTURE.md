@@ -15,14 +15,14 @@
 src/
   Core/                          доменные модели и порты, 0 зависимостей
   Application/                   движки: эффекты (60 FPS), охлаждение (1 Гц), LCD, телеметрия, профиль, валидация
-  Infrastructure.CrossPlatform/  HID-транспорт, NZXT Kraken/HUE 2, ASUS Aura USB, NVML, libusb, JSON-хранилище
-  Infrastructure.Windows/        DXGI Desktop Duplication, LibreHardwareMonitor (PawnIO), WinUSB, high-res таймер, Win32-сенсоры
-  Infrastructure.Linux/          sysfs hwmon (сенсоры + PWM), /proc, заглушка захвата (PipeWire), генератор udev-правил
+  Infrastructure.CrossPlatform/  HID-транспорт, 16 семейств RGB, OpenRGB SDK, NVML, libusb, JSON, WASM-эффекты
+  Infrastructure.Windows/        DXGI Desktop Duplication, WASAPI Loopback, LibreHardwareMonitor (PawnIO), WinUSB, high-res таймер, Win32-сенсоры
+  Infrastructure.Linux/          sysfs hwmon, X11/XWayland, PipeWire/PulseAudio, i2c-dev SMBus, clock_nanosleep, udev
   Host.Daemon/                   ASP.NET Core (Kestrel) + SignalR + REST/OpenAPI + BackgroundService-воркеры
   Tools.HardwareScanner/         CLI rigforge-scan: дамп HID, dry-run проба, сенсоры, udev, конфликты
 tests/RigForge.UnitTests/        xUnit v3 (Microsoft.Testing.Platform)
 ui/                              React 19 + TypeScript + Vite + Tailwind 4 + SignalR + react-konva
-deploy/                          задача Windows «при входе», systemd user unit, udev-правила
+deploy/                          задача Windows «при входе», systemd user unit, udev, install-linux.sh, Build-Release.ps1, build-release.sh
 docs/                            Postman-коллекция
 ```
 
@@ -46,13 +46,15 @@ Windows-классы помечены `[SupportedOSPlatform("windows")]`, и а�
 
 | Интерфейс | Назначение | Реализации |
 | --- | --- | --- |
-| `IRgbDevice` | зоны с нормализованными координатами LED, приём кадра | NZXT HUE 2, ASUS Aura USB, Kingston FURY DDR5 (SMBus) |
+| `IRgbDevice` | зоны с нормализованными координатами LED, приём кадра | 16 семейств прямого кадра: HUE 2; Kraken X3 и Elite Ring; Aura, Mystic Light, Fusion 2.0, Polychrome; Corsair Node/Commander; UNI HUB; CM ARGB Gen2; FURY, ENE и Corsair DRAM; HID++ Lightsync; Razer Chroma; QMK/VialRGB; opt-in OpenRGB SDK |
 | `IFanController` | каналы вентиляторов/помпы, `SetDuty`, `RestoreDefault` | Kraken, HUE 2, LHM Super I/O, sysfs hwmon |
 | `ISensorProvider` | телеметрия с семантическими ролями (`role:CpuTemperature`…) | Kraken, NVML, LHM, Win32, hwmon, /proc |
 | `IAioLcdDevice` | экран СЖО: кадр RGBA, яркость, возврат на экран прошивки | Kraken Z3/2023/2024 |
-| `IScreenCapturer` | маленький BGRA-кадр рабочего стола для Ambilight | DXGI (Windows), заглушка (Linux) |
-| `IDeviceProbe` | обнаружение и инициализация семейства устройств | по одному на семейство |
-| `IProfileStore`, `IPrecisionTimer` | хранение профиля, точный сон рендер-цикла | JSON, waitable timer / `Thread.Sleep` |
+| `IAudioLevelProvider` | до 16 полос спектра (0..1, бас → верх) и RMS; ленивый старт, 0 аллокаций на вызов | WASAPI Loopback (Windows), монитор sink PipeWire/PulseAudio через `libpulse-simple` (Linux); иначе `NullAudioLevelProvider` |
+| `IScreenCapturer` | маленький BGRA-кадр рабочего стола для Ambilight | DXGI (Windows); X11/`XGetImage` через XWayland (Linux, 160×90, только при `DISPLAY` и `libX11.so.6`) |
+| `IDeviceProbe` | обнаружение и инициализация семейства устройств | по одному на семейство, плюс `UnmanagedRgbControllerProbe` |
+| `IProfileStore` | хранение профиля | JSON (`profile.json`) |
+| `IPrecisionTimer` | точный сон рендер-цикла | `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` (Windows), `clock_nanosleep(CLOCK_MONOTONIC)` (Linux); иначе `Thread.Sleep` |
 
 Одно физическое устройство реализует несколько интерфейсов поверх одного соединения (Kraken = вентиляторы + сенсоры + LCD).
 Списки в `DeviceManager` фильтруются по флагам `Capabilities`, а не только по интерфейсу (например, Kraken, чей LCD занят другой программой).
@@ -78,10 +80,10 @@ flowchart TB
 ```
 
 - **Телеметрия** опрашивает провайдеров параллельно с таймаутом и защитой от повторного входа (`SemaphoreSlim(1, 1)` на провайдер); показание живёт до 15 с, свежесть проверяют потребители. Для температурных ролей (`CpuTemperature`, `GpuTemperature`, `LiquidTemperature`) выбирается максимальное валидное значение (`Max`), исключая выбор холодного iGPU вместо нагруженной дискретной видеокарты.
-- **Эффекты** рендерятся на отдельном потоке (`AboveNormal`) в чистый C# буфер (`CanvasBuffer` без загрузки `libSkiaSharp`) с паузой через `IPrecisionTimer`: на Windows стандартный таймер 15,6 мс
-  ограничил бы цикл ~32 FPS, поэтому используется `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` без глобального `timeBeginPeriod`.
+- **Эффекты** рендерятся на отдельном потоке (`AboveNormal`) в чистый C# буфер (`CanvasBuffer` без загрузки `libSkiaSharp`) с паузой через `IPrecisionTimer`. На Windows стандартный таймер 15,6 мс
+  ограничил бы цикл ~32 FPS, поэтому используется `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` без глобального `timeBeginPeriod`. На Linux сон — `clock_nanosleep(CLOCK_MONOTONIC)`: после `EINTR` досыпается остаток.
   Кадр каждого устройства уходит через собственный диспетчер: медленный контроллер пропускает кадры, а не тормозит цикл;
-  одинаковые кадры не отправляются (кроме keep-alive раз в 2 с). Статические эффекты рендерятся **один раз** и усыпляют поток до смены профиля/раскладки (`0%` CPU в простое), а температурные эффекты просыпаются только по событию `TelemetryService.Updated` (1 Гц).
+  одинаковые кадры не отправляются (кроме keep-alive раз в 2 с). Статические эффекты рендерятся **один раз** и усыпляют поток до смены профиля/раскладки (`0%` CPU в простое), температурные просыпаются только по `TelemetryService.Updated` (1 Гц). `EffectSettings.Enabled = false` гасит диоды одним чёрным кадром и спит так же (`Blackout`).
 - **Превью** (LED 20 FPS, LCD-PNG) считаются и отправляются только пока UI-клиент на них подписан (`SetPreview`); при отсутствии экранов и подписчиков `LcdRenderEngine` выгружает `SkiaSharp`-рендереры и спит на сигнале.
 - Каждый цикл хостится `ResilientWorker`: исключение перезапускает именно этот цикл через 2 с — ошибка в LCD не остановит вентиляторы.
 - Порядок hosted-сервисов: `HardwareLifecycleService` стартует первым (профиль → поиск устройств) и останавливается последним,
@@ -111,6 +113,16 @@ flowchart TB
 | Остановка демона / удаление кривой | Kraken получает кривую по жидкости, HUE 2 — фикс. 60 %, Super I/O — `SetDefault()` (BIOS), hwmon — исходный `pwmN_enable` |
 | LHM без прав/PawnIO отдаёт 0 °C | значение отбрасывается (иначе «холодный» CPU занизил бы обороты) → failsafe |
 
+## Охват подсветки
+
+Для production-ready программы обнаружение и прямое управление подсветкой — ключевая возможность, наравне с холстом и эффектами. У пользователей разные устройства на разных контроллерах, портах и драйверах. Один эффект и одна цветокоррекция должны попадать на каждую зону, которую демон умеет писать. Устройство, которое видно, но не принимает кадр, — пробел продукта: его подсветка остаётся цветом чужой прошивки.
+
+Универсального драйвера «любой HID» нет и не планируется. Каждое семейство — свой `IDeviceProbe` и свой сборщик пакетов. Пишем только в регистры подсветки известного протокола и только туда, куда это позволяет железо. SPD, PMIC и неизвестные адреса SMBus не трогаем. Транспорты: USB HID, WinUSB/libusb, SMBus/I2C (PawnIO на Windows, `i2c-dev` на Linux) и каналы видеокарт, которые NVML не отдаёт.
+
+Кадр пишется в 16 семейств (раздел ниже). Манифест `devices/*.json` добавляет VID/PID в уже известное семейство. Новый протокол по-прежнему требует своей пробы и теста пакетов. GeForce остаётся телеметрией NVML: партнёрская подсветка без своего драйвера не получает кадр и показывается как `DeviceSupportStatus.Unmanaged`.
+
+`UnmanagedRgbControllerProbe` (этап 5) не пишет кадр. Vendor-HID известных RGB-вендоров (usage page ≥ `0xFF00`, отчёт не короче 8 байт), чей протокол ещё не реализован, остаётся в списке: имя, `VID:PID`, путь, `Capabilities = None`, `DeviceSupportStatus.Unmanaged`. Клавиатуры, мыши, аудио и consumer-интерфейсы отбрасываются. Один физический прибор — одна запись.
+
 ## Протоколы устройств
 
 Байтовые форматы сверены с исходниками liquidctl (`kraken3.py`, `smart_device.py`) и OpenRGB (`AsusAuraUSBController`, `NZXTHue2Controller`).
@@ -125,6 +137,8 @@ flowchart TB
   (RAM контроллера, износа нет) с переключением `38 01 04 <idx>`.
 - HUE 2 (RGB Controller, Control Hub, RGB & Fan Controller, Smart Device V2): прямой режим `22 1g <1<<ch> 00 GRB×20` + `22 A0 …`,
   до 40 LED на канал; аксессуары из `21 03`; вентиляторы `62 01 <mask> <duty…>`, статус `67 02`.
+- Kraken X3 (`0x2007` / `0x2014`, X53/X63/X73): кольцо и логотип, помпа с тем же полом безопасности, жидкость / RPM / duty. LCD нет. Только direct, во flash не пишется.
+- Kraken 2024 Elite RGB (`0x3012`): 24 диода кольца помпы, кадр — пакет HUE 2 на канал `0` (`KrakenEliteRingChannel`). На хабе HUE 2 то же кольцо приходит аксессуаром `0x1E`.
 - Windows: bulk-интерфейс Kraken привязан к WinUSB — используется нативный WinUSB API (как у liquidctl), без libusb DLL.
   Linux: libusb-1.0 через LibUsbDotNet.
 
@@ -136,12 +150,56 @@ flowchart TB
 **Kingston FURY DDR5 DRAM RGB (SMBus `0x60..0x63`)** — по 12 диодов на планку (`KingstonFuryDramProtocol`, по `KingstonFuryDRAMController` из OpenRGB):
 - **Шина:** на Windows — подписанные модули `SmbusPIIX4.bin` (порты 0/1 AMD FCH) и `SmbusI801.bin` через `\\?\GLOBALROOT\Device\PawnIO` с глобальным мьютексом `Access_SMBUS.HTP.Method`; на Linux — `/dev/i2c-*` (`i2c-piix4` / `i2c-i801`).
 - **Шесть барьеров безопасности (`SmbusSafetyGuard`):**
-  1. до открытия SMBus проверяется SMBIOS Type 17 (`KF5*` part number, 0 байт на шине, если планок нет);
+  1. до открытия SMBus нужна опознанная планка (`KF5*` из SMBIOS Type 17 или из кэша SPD EEPROM `/sys/bus/i2c/devices/*-005[0-7]/eeprom`, udev, EDAC). Пока совпадения нет, на шину уходит 0 байт — в том числе когда DMI не читается. `RequireSmbiosMatch: false` в `appsettings.json` — явный opt-in, по умолчанию true;
   2. жёсткий файрвол адресов разрешает только `0x60..0x63` (обращения к SPD5118 `0x50..0x57` и PMIC `0x48..0x4F` блокируются исключением до `DeviceIoControl`/`ioctl`);
   3. белый список регистров: чтение `0x01..0x04` (сигнатура `"FURY"` в старшем байте слова) и `0x06` (`0x10` Beast, `0x11` Renegade, `0x12` Beast White, `0x15` Beast2); запись только в SRAM контроллера (`0x08` = `0x53`/`0x44`, `0x09` = `0x10` Direct, `0x0B` = `0x00`, `0x20` яркость, `0x27` число слотов, `0x50..0x73` RGB);
-  4. межпроцессный мьютекс `Access_SMBUS.HTP.Method`;
-  5. пауза `3 мс` через `IPrecisionTimer` (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`) только на границах транзакции (`0x08 = 0x53` / `0x44`), без задержки между регистрами `0x50..0x73` (по `Kingston Hyper Fury Ram.js` из SignalRGB — до 30 FPS плавного потока) + дифф-кэш регистров на каждый слот (неизменившиеся байты и повторные статичные кадры дают **0 транзакций SMBus**);
+  4. межпроцессная блокировка шины: мьютекс `Access_SMBUS.HTP.Method` на Windows; на Linux — реентерабельный `Monitor` и `flock(LOCK_EX)` прямо на уже открытом `/dev/i2c-*`, только на внешнем входе (`LinuxI2cSmbusController`). Если `flock` не взялся, `ioctl` не вызывается;
+  5. пауза `3 мс` через `IPrecisionTimer` (high-res waitable timer на Windows, `clock_nanosleep` на Linux) только на границах транзакции (`0x08 = 0x53` / `0x44`), без задержки между регистрами `0x50..0x73` (по `Kingston Hyper Fury Ram.js` из SignalRGB — до 30 FPS плавного потока) + дифф-кэш регистров на каждый слот (неизменившиеся байты и повторные статичные кадры дают **0 транзакций SMBus**);
   6. read-only диагностика `rigforge-scan smbus` проверяет SMBIOS, PawnIO и сигнатуру `"FURY"` без смены режима подсветки.
+
+**MSI Mystic Light USB (VID `0x1462`, `0x0DB0`)** — feature report 185 байт, report id `0x52` (OpenRGB `FeaturePacket_185`). Байт `save_data` (смещение 184) всегда 0: во flash не пишем.
+
+**Gigabyte RGB Fusion 2.0 / ITE 8297 (VID `0x048D`)** — 64 байта, report id `0xCC`. Применение — летучий `0x28 0xFF`. Команды сохранения `0x29` и `0x30` не отправляются.
+
+**ASRock Polychrome USB (VID `0x26CE`)** — 65 байт, report id `0x00`. `0x10` адресует зону платы, `0x12` — поток ARGB (канал, смещение, число, RGB). Пустой commit `0x12`, который у OpenRGB переживает цикл питания, не отправляется.
+
+**Corsair HID (VID `0x1B1C`)** — Lighting Node / Commander Pro (usage page `0xFF00`, отчёт 65 байт, до 120 LED на канал) и Commander Core (usage page `0xFF42`, отчёты 65…1025, до 144 LED). Пакеты заполняют `Span<byte>` вызывающего. Возврат аппаратного эффекта летучий, flash не трогается.
+
+**Lian Li UNI HUB (VID `0x0CF2`)** — report id `0xE0`. Заголовок direct: `0xE0 0x10 0x60 <channel>`. Цвета — команда `0x30 + channel`, тройки RGB или RBG. Во flash ничего не пишется.
+
+**Cooler Master ARGB Gen2 (VID `0x2516`)** — 65 байт. Программный direct начинается с `[0x00, 0x80, …]`, чанки LED — команда `0x10`. Эффект во flash не сохраняется.
+
+**ENE SMBus DRAM (Aura / Trident Z / Ballistix)** — только адреса `0x70..0x77` и `0x39..0x3C`. SPD `0x50..0x57` и PMIC `0x48..0x4F` режет `SmbusAddressFirewall`. 16-битный указатель ставится на регистр `0x00` (старший байт, затем младший), данные читаются с `0x81`. Порт данных `0x01` открывается после сигнатуры `AUDA` / `ENE ` / `DIMM`. Direct: `0x8021 = 0x01`, затем `0x8020 = 0x01`. Байты LED по `0x8100` идут в порядке R, B, G.
+
+**Corsair Vengeance / Dominator SMBus DRAM** — адреса `0x58..0x5F`, строго выше SPD. Перед direct читаются vendor `0x43 == 0x1B` и model `0x44 == 0x04`. Цвета: `0x31` включает режим, `0x32` применяет кадр; оба значения летучие. Импульс apply не кэшируется и уходит снова, когда цвет реально изменился.
+
+**Logitech Lightsync HID++ 2.0 (VID `0x046D`)** — длинный отчёт `0x11`, 20 байт, usage page `0xFF00` / usage `0x0002`. Эффекты зон летучие, onboard-профиль не пишется.
+
+**Razer Chroma HID (VID `0x1532`)** — payload 90 байт (91 с report id): статус, transaction id, размер, класс и id команды, 80 байт аргументов, XOR CRC по payload `[2..87]` в `[88]`. Custom-frame летучий, профиль не сохраняется.
+
+**QMK / VialRGB** — raw HID, usage page `0xFF60`, usage `0x0061`. Отчёт 33 байта: report id `0x00` и 32 байта VIA. Direct только в RAM. Lighting-save `0x09` не отправляется. На проводе цвет — 8-битный HSV (hue 0..255, не градусы).
+
+**OpenRGB SDK (opt-in)** — TCP. Кадр: `"ORGB"` + little-endian индекс устройства, id пакета и длина; цвет LED — RGBX (`R, G, B, 0x00`). Клиент молчит, пока не задан `RIGFORGE_OPENRGB_ENDPOINT` или `Hardware:OpenRgb:Enabled=true`. Закрытый порт даёт пустой список.
+
+Контроллер без своего писателя сюда не входит: его показывает `UnmanagedRgbControllerProbe` со статусом `Unmanaged`.
+
+## Библиотека эффектов и аудио
+
+17 встроенных эффектов. Процедурные считают цвет только в точках диодов (`TrySamplePoints`, буферы кадра выделены заранее — 0 аллокаций на кадр). Холст растеризуется у `ambilight`: ему нужен кадр рабочего стола. Внешние модули садятся в категорию `Custom`.
+
+| Категория | Эффекты |
+| --- | --- |
+| `Static` | `solid` |
+| `Flowing` | `rainbow-wave`, `gradient`, `breathing`, `spectrum-cycle`, `aurora`, `cyber-wave`, `fire-lava`, `starlight` |
+| `Spatial` | `spiral-vortex`, `radial-pulse`, `plasma-storm`, `matrix-rain`, `meteor-scanner` |
+| `Reactive` | `temperature`, `ambilight`, `audio-reactive` |
+| `Custom` | WASM: `{DataDirectory}/effects/*.wat\|*.wasm` рядом с `.json`; совпадение `id` со встроенным пропускается |
+
+Схема `EffectParameterDefinition`: `ColorList`, `FloatRange`, `IntRange`, `Boolean`, `Select`, `SensorSelector`. Форма UI и `RigProfileValidator` строятся по ней. Значения лежат в `EffectSettings.Parameters`; `profile.json` мигрирует со `schemaVersion` 1 на 2.
+
+`IAudioLevelProvider.ReadSpectrum` отдаёт до 16 полос (бас → верх, 0..1) и RMS. FFT 256, окно Ханна, без аллокаций на вызов. WASAPI loopback (Windows) и монитор sink через `libpulse-simple` (PipeWire `pipewire-pulse` или PulseAudio) открываются на первом чтении и отпускают устройство через 5 с простоя. Нет библиотеки — `IsSupported = false`, исключения нет. Спектр запрашивает только `audio-reactive`.
+
+`EffectSettings.Enabled = false` — master blackout: один чёрный кадр и сон потока (`EffectRenderMode.Blackout`, 0 % CPU). Яркость в профиле сохраняется. `TriggerIdentify` и `POST /api/devices/{deviceId}/identify?zoneId=` будят цикл и мигают устройство или одну зону 4 Гц (полупериод `Stopwatch.Frequency / 8`, циан `00F5FF` / тёмный `0A1018`) около 2 с, в том числе при выключенной подсветке и статическом эффекте. Пустой `zoneId` мигает все зоны устройства.
 
 ## UI (ui/)
 
@@ -152,8 +210,13 @@ TypeScript закреплён на 6.0: typescript-eslint пока не подд
   на превью после переподключения), zod-схемы (лимиты не мягче серверных валидаторов).
 - `state/` — Context + `useReducer` для состояния, телеметрии и статуса вентиляторов; поток LED-превью 20 FPS хранится вне reducer
   (`ledPreviewStore` + `useLedPreview`), поэтому перерисовывается только слой диодов.
-- `features/` — Dashboard, Lighting (редактор холста на Konva: перетаскивание, resize, поворот с шагом 15°, длина ARGB-лент),
-  Cooling (SVG-редактор кривой с живым маркером, пресеты для помпы и вентиляторов), LCD (живое превью), Devices.
+- `features/lighting` — Effect Gallery (`EffectGallery`): вкладки пяти категорий, поиск, карточки с живым `EffectMiniPreview` и курируемые палитры (`palettes.ts`: Cyberpunk, Synthwave, Northern Lights, Inferno, Arctic Ice, Matrix, ROG Crimson, Vaporwave).
+  Spatial Canvas (`LayoutStage`, `layoutModel`): zoom 0.5–3 с шагом 0.25, pan, snap 0 / 5 / 10 px, силуэты железа (`ZoneSilhouette` по топологии и имени), пресеты 320×180 (16:9), 240×240 (корпус), 400×225 (XL), 480×270 (HD). Перетаскивание, resize, поворот с шагом 15°, длина ARGB-лент.
+- `features/lcd` — общий `Lcd` и per-device override `Displays[deviceId]` (`LcdDeviceList`). Нет записи — экран берёт общий профиль. Живое превью кадра.
+- `features/devices` — центр управления: вкладки All, Active Control (`Supported`), Sensors Only (`TelemetryOnly`), Detected (`Unmanaged`); Blink / Identify на устройство и зону; `ProfileTransferBar` (import/export профиля); на Linux `PlatformSetupModal` с udev, `modprobe i2c-dev` и `install-linux.sh`.
+- `features/dashboard` — Live Performance Showcase (`PerformanceShowcase`, `GET /api/performance`): режим рендера, время кадра, CPU, Private RAM, GC. Ориентир витрины при прямом семплинге — ~2–5 µs/frame, ~0,0–0,4 % CPU, ~55–65 МБ Private RAM против 650–900 МБ у WebView-наборов (`WEBVIEW_SUITE_RAM_MB`). Таблица в «Память и размер» — отдельный dry-run замер через 20 с после старта.
+- `features/cooling` — SVG-редактор кривой с живым маркером, пресеты для помпы и вентиляторов.
+- Тесты UI — Vitest (`npm test` в `ui/`): `effectModel`, `layoutModel`, `devicesModel`, `schemas`, `performanceStore`.
 - Ошибки — `ErrorBoundary` на каждую страницу и тосты с текстом `HubException`. Страница Lighting (Konva) грузится лениво.
 
 Dev: Vite на :5173 проксирует `/hubs` (WebSocket) и `/api` на демон. Prod: `npm run build` пишет в `src/Host.Daemon/wwwroot`,
@@ -200,12 +263,29 @@ dotnet run --project src/Tools.HardwareScanner -- smbus
 dotnet run --project src/Tools.HardwareScanner -- sensors --watch
 # тесты
 dotnet test --project tests/RigForge.UnitTests
+cd ui; npm test
 # Windows: сборка UI + publish + задача при входе (от администратора)
 .\deploy\windows\Install-RigForgeTask.ps1
+# релизные каталоги win-x64 и linux-x64
+.\deploy\Build-Release.ps1
 ```
 
-Linux: `rigforge-scan udev -o 60-rigforge.rules` → `/etc/udev/rules.d/`, затем `deploy/linux/rigforge.service` как user unit.
 Перед запуском закройте NZXT CAM, SignalRGB и LightingService (Armoury Crate) — демон предупреждает о них в UI и логе.
+
+## Linux и дистрибуция
+
+`LinuxI2cSmbusController` открывает чипсетный `/dev/i2c-N` (`i2c-piix4` / `i2c-i801`) и держит тот же контракт лока, что `PawnIoSmbusController`: `AcquireBusLock` реентерабелен на вызывающем потоке (`Monitor`). Межпроцессный `flock(LOCK_EX)` берётся на самом файловом дескрипторе `/dev/i2c-*` и только на внешнем входе. Отдельного lock-файла нет: блокировка ядра общая для всех процессов, открывших этот же `/dev/i2c-N`, и у неё нет symlink-поверхности в `/tmp`. Если `flock` вернул ошибку (после повтора `EINTR`), передача не начинается и `ioctl` не вызывается.
+
+Инвентарь планок без root: сначала SMBIOS Type 17 из `/sys/firmware/dmi/tables/DMI`. Если таблица недоступна, подбираются кэш SPD EEPROM (`/sys/bus/i2c/devices/*-005[0-7]/eeprom`), кэш udev (`/run/udev/data`) и EDAC (`/sys/devices/system/edac`). Совпавшая планка из любого из этих источников разрешает открыть SMBus. Нечитаемый DMI при пустом кэше шину не открывает: `SmbusProbePolicy.AllowsBusProbe` при `RequireSmbiosMatch: true` (значение по умолчанию) возвращает true только когда есть совпавшая планка. `CanReadSmbios = false` — диагностика, не разрешение на проб. Пустая, но читаемая таблица ошибкой прав не считается.
+
+Правило `SUBSYSTEM=="dmi", KERNEL=="id"` в `deploy/linux/60-rigforge.rules` выставляет чтение на `/sys/firmware/dmi/tables/DMI` (и на точку входа SMBIOS). В таблице есть серийные номера; правило добавляет только бит чтения. Явный отказ от проверки личности планки — `Hardware:KingstonFury:RequireSmbiosMatch`, `Hardware:EneDram:RequireSmbiosMatch` или `Hardware:CorsairDram:RequireSmbiosMatch` равные `false` в `appsettings.json`. SPD `0x50..0x57` и PMIC по-прежнему закрыты `SmbusAddressFirewall`.
+
+Захват Ambilight — `LinuxX11ScreenCapturer` (X11 и XWayland, 160×90 BGRA). Сессия без `DISPLAY` или без `libX11.so.6` сообщает `IsSupported = false` и не бросает исключение. Аудио — монитор sink: один и тот же `libpulse-simple` у PulseAudio и у PipeWire. Сон цикла — `clock_nanosleep(CLOCK_MONOTONIC)`.
+
+- `deploy/linux/install-linux.sh` — Debian/Ubuntu, Fedora/RHEL, Arch/CachyOS, openSUSE. Кладёт демон в `~/.local/share/rigforge` (готовый `artifacts/rigforge-linux-x64` или `dotnet publish`), ставит `60-rigforge.rules`, `modules-load.d` и `modprobe` для `i2c-dev` / `i2c-piix4` / `i2c-i801`, включает user unit `rigforge.service`. Профиль в `~/.config/rigforge` не трогает.
+- `deploy/Build-Release.ps1` и `deploy/build-release.sh` — `npm ci && npm run build`, затем framework-dependent publish `win-x64` и `linux-x64` (демон и `rigforge-scan`) в `artifacts/rigforge-<rid>` вместе с `deploy/` и `effects/`. `SKIP_UI=1` / `-SkipUi` пропускает фронтенд.
+
+Вручную по-прежнему достаточно `rigforge-scan udev -o 60-rigforge.rules` в `/etc/udev/rules.d/` и user unit `deploy/linux/rigforge.service`.
 
 ## Состояние и ограничения MVP
 
@@ -223,18 +303,18 @@ RTX 5070 Ti через NVML; статус Kraken и Control Hub разобран
 Не проверено на железе: установка скважности помпы и вентиляторов (намеренно не трогались). Скважность для портов 4–5
 Control Hub — экстраполяция формата `62 01` на 5 каналов.
 
-Не реализовано: захват экрана на Linux (xdg-desktop-portal + PipeWire), Kraken X3 (`0x2007/0x2014`), подсветка кольца Kraken Elite,
-управление вентиляторами GPU, Native AOT, восстановление яркости LCD, бывшей до запуска (сейчас выставляется из профиля, 80 %).
+Остаётся за кадром этого прогона: управление вентиляторами GPU, Native AOT, восстановление яркости LCD, бывшей до запуска (сейчас из профиля, 80 %). Подсветка GeForce своим каналом не пишется: NVML остаётся телеметрией, партнёрский USB без протокола показывается как `Unmanaged`. Полноэкранные игровые эффекты (*Pong*, *Mario*) и отдельное WebGL-превью в UI в рантайм не входят: семплинг считает демон, мини-превью галереи рисует canvas 2D.
 
 ## Дорожная карта развития (Public Distribution & Custom Effects)
 
 Спецификации и планы этапов зафиксированы в `docs/superpowers/specs/`:
 1. **Этап 1 (Реализовано):** перевод RGB-рендерера на чистый C# (`CanvasBuffer` + `PrecomputedTap`) без `SkiaSharp`, Event-Driven сон фоновых воркеров, разделение локов чтения/записи HID, пулинг `LibUsb` (0 аллокаций в LOH), батч-мьютекс SMBus, разрешение температурных ролей по `Max` и посекционное восстановление повреждённого `profile.json`.
 2. **Этап 2 (Реализовано):** декларативный каталог `IDeviceManifestCatalog` (`JsonDeviceManifestCatalog` + внешние JSON-манифесты в `%LOCALAPPDATA%\RigForge\devices\*.json`), неразрушающий Delta-рескан `DeviceManager` с подпиской на USB hotplug, универсальный `SmbusAddressFirewall`, прямой парсер `SmbiosType17Parser` (`GetSystemFirmwareTable('RSMB')` без `new SMBios()`) и отключение 24-часовых буферов истории `LibreHardwareMonitor` (~47–52 МБ Private Working Set со всеми 9 устройствами).
-3. **Этап 3 (Цель — `2026-11-01-custom-effects-and-zero-alloc-rgb-design.md`):**
-   - **Кастомные и маркетплейс-эффекты (цель):** полный холст для игр (*Pong*, *Mario*), WebGL-превью в UI и аудиоспектр (*Audio Visualizer*). Песочница прямого семплинга уже есть, см. следующий пункт.
+3. **Этап 3 (Реализовано — `2026-11-01-custom-effects-and-zero-alloc-rgb-design.md`):**
+   - **Кастомные эффекты (Реализовано):** 17 встроенных эффектов в категориях `Static`, `Flowing`, `Spatial`, `Reactive` и WASM-каталог `Custom`, включая `audio-reactive` на 16 полосах. Полноэкранные игровые холсты (*Pong*, *Mario*) и отдельное WebGL-превью в этот рантайм не входили.
    - **WASM-песочница прямого семплинга (Реализовано):** `{DataDirectory}/effects/*.wat|*.wasm` рядом с одноимённым `.json`. Wasmtime без WASI и без импортов, память 32-бит с максимумом не больше 32 страниц (2 МиБ), топливо на старт модуля и на каждый `sample`. Гость пишет `0x00RRGGBB` только в точки реальных диодов; `Engine` не создаётся, если каталог пуст. Совпадение `id` со встроенным эффектом пропускается. Пример: `effects/wasm-plasma`.
-   - **Direct LED Sampling и схема параметров (Реализовано):** двухрежимный `IEffect.TrySamplePoints` — процедурные эффекты считают цвет только в координатах реальных диодов (`LedPoint` предвычисляются в `LedSamplePlan`, 0 аллокаций на кадр), холст растеризуется только для эффектов, отказавшихся от семплинга (`Ambilight`). Параметры эффектов описываются декларативной схемой `EffectParameterDefinition` (`ColorList` / `FloatRange` / `SensorSelector`), значения хранятся в словаре `EffectSettings.Parameters` (JSON), UI-форма и валидатор строятся по схеме; `profile.json` мигрирует со `schemaVersion` 1 на 2 (старые плоские поля сворачиваются в `Parameters` конвертером).
-   - **Zero-Allocation протоколы (Реализовано):** `AuraUsbProtocol.WriteDirectPacket`, `NzxtProtocol.WriteHue2Packet` и `KingstonFuryDramProtocol.BuildFrameWrites` пишут пакеты и SMBus-команды напрямую в буфер вызывающего (`Span<byte>` / предвыделенный `KingstonRegisterWrite[]`), 0 аллокаций на кадр после прогрева для удержания управляемой кучи C# на уровне ~7–8 МБ при многочасовой работе.
+   - **Direct LED Sampling и схема параметров (Реализовано):** двухрежимный `IEffect.TrySamplePoints` — процедурные эффекты считают цвет только в координатах реальных диодов (`LedPoint` предвычисляются в `LedSamplePlan`, 0 аллокаций на кадр), холст растеризуется только для эффектов, отказавшихся от семплинга (`Ambilight`). Параметры описываются схемой `EffectParameterDefinition` (`ColorList`, `FloatRange`, `IntRange`, `Boolean`, `Select`, `SensorSelector`), значения хранятся в `EffectSettings.Parameters` (JSON), UI-форма и валидатор строятся по схеме; `profile.json` мигрирует со `schemaVersion` 1 на 2 (старые плоские поля сворачиваются в `Parameters` конвертером). `Enabled = false` гасит подсветку и усыпляет цикл.
+   - **Zero-Allocation протоколы (Реализовано):** `AuraUsbProtocol.WriteDirectPacket`, `NzxtProtocol.WriteHue2Packet` и `KingstonFuryDramProtocol.BuildFrameWrites` пишут пакеты и SMBus-команды напрямую в буфер вызывающего (`Span<byte>` / предвыделенный `KingstonRegisterWrite[]`), 0 аллокаций на кадр после прогрева для удержания управляемой кучи C# на уровне ~7–8 МБ при многочасовой работе. Писатели семейств этапа 5 заполняют тот же буфер вызывающего и не шлют команду сохранения во flash.
    - **Сегментирование ARGB-цепочек, Matrix2D и цветокоррекция (Реализовано):** один физический ARGB-порт раскладывается на независимые `ZonePlacement` (`segmentId`, своё положение и топология) в порядке цепочки; `LedTopology.Matrix2D` строит построчную сетку, `Serpentine` разворачивает нечётные ряды. Сумма `ledCount` сегментов меняет размер зоны. На устройство задаётся `DeviceColorCorrection` (гамма 0.5..3 и баланс белого `#RRGGBB`): `LedSamplePlan` заранее считает три таблицы по 256 байт и применяет их при прямом семплинге и при чтении холста без аллокаций на кадр.
-4. **Этап 4 (Цель):** универсальный движок кастомных дисплеев (`IDisplayDevice` с поддержкой произвольных пропорций, мульти-экранного профиля `Displays[deviceId]` и нативных форматов `Rgb565`, `Jpeg`, `Rgba8888`).
+4. **Этап 4 (Реализовано):** per-device LCD `RigProfile.Displays[deviceId]` (до 16 записей). `LcdRenderEngine` берёт override устройства, иначе общий `Lcd`. REST: `PUT` и `DELETE /api/profile/displays/{deviceId}`. Экран Kraken отдаёт поток `Rgb565` или RGBX-бакет; виджеты рисуются в `Rgba8888`; превью холста подсветки — JPEG. Экраны остаются `IAioLcdDevice` с размером из `LcdInfo`.
+5. **Этап 5 (Реализовано):** прямой кадр на 16 семейств из раздела «Протоколы устройств» и карточка обнаруженного, но ещё не управляемого vendor-HID через `UnmanagedRgbControllerProbe` (`DeviceSupportStatus.Unmanaged`, имя и путь). NVML остаётся телеметрией и подсветку видеокарты не заменяет. Новый VID/PID известного семейства подключается манифестом. Новый протокол добавляется пробой и тестом пакетов по OpenRGB или liquidctl и проверяется на железе до того, как зона попадает в профиль.

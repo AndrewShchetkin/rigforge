@@ -32,4 +32,40 @@ public static class ProfileCommands
         profiles.UpdateAsync(
             p => p with { ColorCorrections = p.ColorCorrections.Where(c => c.DeviceId != deviceId).ToArray() },
             cancellationToken);
+
+    /// <summary>Adds or replaces the LCD settings override for one device. <see cref="RigProfile.Lcd"/> stays the fallback for everyone else.</summary>
+    public static Task<ProfileUpdateResult> UpsertDisplayAsync(this ProfileService profiles, string deviceId, LcdSettings settings, CancellationToken cancellationToken) =>
+        profiles.UpdateAsync(current =>
+        {
+            var displays = new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
+            if (current.Displays is not null)
+            {
+                foreach (var (key, value) in current.Displays)
+                {
+                    displays[key] = value;
+                }
+            }
+
+            displays[deviceId] = settings;
+            return current with { Displays = displays };
+        }, cancellationToken);
+
+    /// <summary>Removes a per-device LCD override so the device falls back to <see cref="RigProfile.Lcd"/>.</summary>
+    public static Task<ProfileUpdateResult> RemoveDisplayAsync(this ProfileService profiles, string deviceId, CancellationToken cancellationToken) =>
+        profiles.UpdateAsync(current =>
+        {
+            var displays = new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
+            if (current.Displays is not null)
+            {
+                foreach (var (key, value) in current.Displays)
+                {
+                    if (!string.Equals(key, deviceId, StringComparison.Ordinal))
+                    {
+                        displays[key] = value;
+                    }
+                }
+            }
+
+            return current with { Displays = displays };
+        }, cancellationToken);
 }

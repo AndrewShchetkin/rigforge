@@ -18,6 +18,18 @@ public interface IHardwareDevice : IAsyncDisposable
 
     DeviceCapabilities Capabilities { get; }
 
+    /// <summary>
+    /// Derived from <see cref="Capabilities"/> unless an implementation overrides it.
+    /// Sensor-only devices stay telemetry; devices with no capabilities are left unmanaged.
+    /// </summary>
+    DeviceSupportStatus SupportStatus =>
+        Capabilities == DeviceCapabilities.None ? DeviceSupportStatus.Unmanaged :
+        Capabilities == DeviceCapabilities.Sensors ? DeviceSupportStatus.TelemetryOnly :
+        DeviceSupportStatus.Supported;
+
+    /// <summary>Why <see cref="SupportStatus"/> is not <see cref="DeviceSupportStatus.Supported"/>, when there is a reason worth showing.</summary>
+    string? StatusReason => null;
+
     /// <summary>Diagnostic details such as firmware version or USB path.</summary>
     IReadOnlyDictionary<string, string> Properties { get; }
 }

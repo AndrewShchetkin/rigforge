@@ -15,6 +15,15 @@ public sealed class RigProfileValidator : AbstractValidator<RigProfile>
         RuleFor(p => p.Effect).NotNull().SetValidator(new EffectSettingsValidator(effects));
         RuleFor(p => p.Lcd).NotNull().SetValidator(new LcdSettingsValidator());
 
+        var lcdValidator = new LcdSettingsValidator();
+        RuleFor(p => p.Displays)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
+            .WithMessage("Displays are required.")
+            .Must(displays => displays is { Count: <= 16 })
+            .WithMessage("At most 16 display overrides are supported.")
+            .Custom((displays, context) => ValidateDisplays(displays, lcdValidator, context));
+
         RuleFor(p => p.FanCurves)
             .Cascade(CascadeMode.Stop)
             .NotNull()
@@ -60,6 +69,37 @@ public sealed class RigProfileValidator : AbstractValidator<RigProfile>
         }
 
         return true;
+    }
+
+    private static void ValidateDisplays(
+        IReadOnlyDictionary<string, LcdSettings> displays,
+        LcdSettingsValidator lcdValidator,
+        ValidationContext<RigProfile> context)
+    {
+        if (displays is null)
+        {
+            return;
+        }
+
+        foreach (var (deviceId, settings) in displays)
+        {
+            if (string.IsNullOrEmpty(deviceId) || deviceId.Length > 256)
+            {
+                context.AddFailure(nameof(RigProfile.Displays), "Display device id must be non-empty and at most 256 characters.");
+            }
+
+            if (settings is null)
+            {
+                context.AddFailure(nameof(RigProfile.Displays), "Display settings cannot be null.");
+                continue;
+            }
+
+            var result = lcdValidator.Validate(settings);
+            foreach (var error in result.Errors)
+            {
+                context.AddFailure(nameof(RigProfile.Displays), error.ErrorMessage);
+            }
+        }
     }
 }
 
@@ -215,6 +255,34 @@ public sealed class EffectSettingsValidator : AbstractValidator<EffectSettings>
                     }
 
                     break;
+                case EffectParameterKind.Boolean:
+                    if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be a boolean.");
+                    }
+
+                    break;
+                case EffectParameterKind.IntRange:
+                    if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var integer))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be an integer.");
+                    }
+                    else if ((definition.Min is not null && integer < definition.Min) || (definition.Max is not null && integer > definition.Max))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be between {definition.Min} and {definition.Max}.");
+                    }
+
+                    break;
+                case EffectParameterKind.Select:
+                    if (value.ValueKind != JsonValueKind.String
+                        || value.GetString() is not { } selected
+                        || definition.Options is null
+                        || !ContainsOption(definition.Options, selected))
+                    {
+                        context.AddFailure(nameof(EffectSettings.Parameters), $"Parameter '{definition.Key}' must be one of the allowed options.");
+                    }
+
+                    break;
                 case EffectParameterKind.SensorSelector:
                     if (value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
                     {
@@ -239,6 +307,19 @@ public sealed class EffectSettingsValidator : AbstractValidator<EffectSettings>
                 context.AddFailure(nameof(EffectSettings.Parameters), "Parameter 'temperatureHigh' must be above 'temperatureLow'.");
             }
         }
+    }
+
+    private static bool ContainsOption(IReadOnlyList<EffectSelectOption> options, string selected)
+    {
+        foreach (var option in options)
+        {
+            if (string.Equals(option.Value, selected, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void ValidateColorList(

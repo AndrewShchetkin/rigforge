@@ -2,15 +2,11 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.HostFiltering;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.EventLog;
-using RigForge.Application;
 using RigForge.Host.Daemon;
 using RigForge.Host.Daemon.Api;
 using RigForge.Host.Daemon.Hubs;
 using RigForge.Host.Daemon.Security;
 using RigForge.Host.Daemon.Services;
-using RigForge.Infrastructure.CrossPlatform;
-using RigForge.Infrastructure.Linux;
-using RigForge.Infrastructure.Windows;
 
 // Slim builder: no IIS integration, no HTTPS/certificate plumbing, fewer default services → smaller footprint.
 // Content root = binary folder: services and logon tasks start with System32 as the working directory.
@@ -33,22 +29,7 @@ if (OperatingSystem.IsWindows())
     builder.Logging.AddEventLog().AddFilter<EventLogLoggerProvider>(level => level >= LogLevel.Warning);
 }
 
-builder.Services.Configure<DaemonOptions>(builder.Configuration.GetSection(DaemonOptions.SectionName));
-builder.Services.Configure<RenderingOptions>(builder.Configuration.GetSection(RenderingOptions.SectionName));
-builder.Services.Configure<TelemetryOptions>(builder.Configuration.GetSection(TelemetryOptions.SectionName));
-builder.Services.Configure<CoolingOptions>(builder.Configuration.GetSection(CoolingOptions.SectionName));
-builder.Services.Configure<LcdOptions>(builder.Configuration.GetSection(LcdOptions.SectionName));
-
-builder.Services.AddRigForgeApplication();
-builder.Services.AddRigForgeCrossPlatformInfrastructure(builder.Configuration);
-if (OperatingSystem.IsWindows())
-{
-    builder.Services.AddRigForgeWindowsPlatform(builder.Configuration);
-}
-else if (OperatingSystem.IsLinux())
-{
-    builder.Services.AddRigForgeLinuxPlatform(builder.Configuration);
-}
+builder.Services.AddRigForgeDaemonServices(builder.Configuration);
 
 // The daemon listens on loopback only; host filtering also blocks DNS-rebinding attempts.
 builder.Services.Configure<HostFilteringOptions>(options =>

@@ -8,11 +8,14 @@ import { Spinner } from '../../components/ui/Spinner.tsx';
 import { NO_ERRORS, toFieldErrors } from '../../lib/validation.ts';
 import { useDaemonApi, useSensorOptions, useSystem } from '../../state/hooks.ts';
 import { EffectForm } from './EffectForm.tsx';
+import { isLightingEnabled } from './effectModel.ts';
 
 const APPLY_DELAY_MS = 300;
 
 interface PendingEdit {
   revision: number;
+  /** Effect at the moment this edit started, so header power and brightness can win when the form did not touch them. */
+  baseline: EffectSettings;
   settings: EffectSettings;
 }
 
@@ -35,14 +38,28 @@ export function EffectPanel() {
     (patch: Partial<EffectSettings>) => {
       revision.current += 1;
       const next = revision.current;
-      setPending((current) => ({ revision: next, settings: { ...(current?.settings ?? saved), ...patch } }));
+      setPending((current) => {
+        const base = current?.settings ?? saved;
+        return {
+          revision: next,
+          baseline: current?.baseline ?? saved,
+          settings: { ...base, ...patch, enabled: isLightingEnabled({ enabled: patch.enabled ?? base.enabled }) },
+        };
+      });
     },
     [saved],
   );
 
   const apply = useEffectEvent(async (edit: PendingEdit, settings: EffectSettings) => {
+    const latest = profile.effect;
+    const editedEnabled = isLightingEnabled(settings);
+    const merged: EffectSettings = {
+      ...settings,
+      enabled: editedEnabled === isLightingEnabled(edit.baseline) ? isLightingEnabled(latest) : editedEnabled,
+      brightness: settings.brightness === edit.baseline.brightness ? latest.brightness : settings.brightness,
+    };
     setApplying(true);
-    await api.updateEffect(settings);
+    await api.updateEffect(merged);
     setApplying(false);
     // Newer edits stay pending; otherwise show the daemon's state again (it has this edit, or rejected it).
     setPending((current) => (current?.revision === edit.revision ? null : current));
@@ -72,7 +89,7 @@ export function EffectPanel() {
   }
 
   return (
-    <Card title="Effect" description="Changes apply automatically." actions={status}>
+    <Card className="min-w-0" title="Effect" description="Changes apply automatically." actions={status}>
       {effects.length === 0 ? (
         <EmptyState title="No effects available">The daemon did not report any lighting effects.</EmptyState>
       ) : (

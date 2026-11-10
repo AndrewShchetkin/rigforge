@@ -9,6 +9,10 @@ import type {
 } from './contracts.ts';
 import {
   DEVICE_CAPABILITIES,
+  DEVICE_SUPPORT_STATUSES,
+  EFFECT_CATEGORIES,
+  EFFECT_PARAMETER_KINDS,
+  EFFECT_RENDER_MODES,
   FAN_CHANNEL_KINDS,
   FAN_CONTROL_MODES,
   LCD_MODES,
@@ -105,10 +109,12 @@ export function virtualCanvasSchema(maxLedCounts?: ReadonlyMap<string, number>) 
     }) satisfies z.ZodType<VirtualCanvas>;
 }
 
-const effectParameterValueSchema = z.union([z.array(z.string()), z.number(), z.string()]);
+const effectParameterValueSchema = z.union([z.array(z.string()), z.number(), z.string(), z.boolean()]);
 
-const effectSettingsSchema = z.object({
+export const effectSettingsSchema = z.object({
   effectId: z.string().min(1, 'Pick an effect'),
+  /** Omitted on older profiles; the daemon treats that as lighting on. */
+  enabled: z.boolean().default(true),
   brightness: z.number().min(0).max(1),
   parameters: z.record(z.string(), effectParameterValueSchema),
   targetFps: z.int().min(1).max(60),
@@ -133,21 +139,49 @@ export function effectSettingsSchemaFor(descriptor: EffectDescriptorDto | undefi
       // Missing keys fall back to the schema default, mirroring the daemon.
       const value = effect.parameters[parameter.key] ?? parameter.defaultValue;
       const path = ['parameters', parameter.key];
-      if (parameter.kind === 'ColorList') {
-        if (!Array.isArray(value) || value.length < parameter.minColors || value.length > parameter.maxColors) {
-          ctx.addIssue({ code: 'custom', path, message: `Use ${parameter.minColors}–${parameter.maxColors} colors` });
-        } else if (value.some((color) => !/^#[0-9a-f]{6}$/i.test(color))) {
-          ctx.addIssue({ code: 'custom', path, message: 'Colors must be #RRGGBB' });
+      switch (parameter.kind) {
+        case 'ColorList':
+          if (!Array.isArray(value) || value.length < parameter.minColors || value.length > parameter.maxColors) {
+            ctx.addIssue({ code: 'custom', path, message: `Use ${parameter.minColors}–${parameter.maxColors} colors` });
+          } else if (value.some((color) => !/^#[0-9a-f]{6}$/i.test(color))) {
+            ctx.addIssue({ code: 'custom', path, message: 'Colors must be #RRGGBB' });
+          }
+          break;
+        case 'FloatRange':
+          if (typeof value !== 'number' || !Number.isFinite(value)) {
+            ctx.addIssue({ code: 'custom', path, message: 'Must be a number' });
+          } else if ((parameter.min !== null && value < parameter.min) || (parameter.max !== null && value > parameter.max)) {
+            ctx.addIssue({ code: 'custom', path, message: `Must be between ${parameter.min} and ${parameter.max}` });
+          }
+          break;
+        case 'IntRange':
+          if (typeof value !== 'number' || !Number.isInteger(value)) {
+            ctx.addIssue({ code: 'custom', path, message: 'Must be a whole number' });
+          } else if ((parameter.min !== null && value < parameter.min) || (parameter.max !== null && value > parameter.max)) {
+            ctx.addIssue({ code: 'custom', path, message: `Must be between ${parameter.min} and ${parameter.max}` });
+          }
+          break;
+        case 'Boolean':
+          if (typeof value !== 'boolean') {
+            ctx.addIssue({ code: 'custom', path, message: 'Must be on or off' });
+          }
+          break;
+        case 'Select': {
+          const options = parameter.options ?? [];
+          const allowed = typeof value === 'string' && options.some((option) => option.value === value);
+          if (!allowed) {
+            ctx.addIssue({ code: 'custom', path, message: 'Pick one of the options' });
+          }
+          break;
         }
-      } else if (parameter.kind === 'FloatRange') {
-        if (typeof value !== 'number' || !Number.isFinite(value)) {
-          ctx.addIssue({ code: 'custom', path, message: 'Must be a number' });
-        } else if ((parameter.min !== null && value < parameter.min) || (parameter.max !== null && value > parameter.max)) {
-          ctx.addIssue({ code: 'custom', path, message: `Must be between ${parameter.min} and ${parameter.max}` });
-        }
-      } else if (parameter.kind === 'SensorSelector') {
-        if (typeof value !== 'string' || value.length === 0) {
-          ctx.addIssue({ code: 'custom', path, message: 'Pick a sensor' });
+        case 'SensorSelector':
+          if (typeof value !== 'string' || value.length === 0) {
+            ctx.addIssue({ code: 'custom', path, message: 'Pick a sensor' });
+          }
+          break;
+        default: {
+          const unhandled: never = parameter.kind;
+          void unhandled;
         }
       }
     }
@@ -250,8 +284,31 @@ const canvasShape = z.looseObject({
   ),
 });
 
-const systemStateSchema = z.looseObject({
-  info: z.looseObject({ version: str, platform: str, startedAt: str, workingSetBytes: num, managedHeapBytes: num }),
+const performanceShape = z.looseObject({
+  timestamp: str,
+  cpuPercent: num,
+  privateBytes: num,
+  workingSetBytes: num,
+  managedHeapBytes: num,
+  effectFps: num,
+  frameTimeMicroseconds: num,
+  renderMode: z.enum(EFFECT_RENDER_MODES),
+  activeRgbDevices: num,
+  totalControlledLeds: num,
+  gen0Collections: num,
+  gen1Collections: num,
+  gen2Collections: num,
+});
+
+export const systemStateSchema = z.looseObject({
+  info: z.looseObject({
+    version: str,
+    platform: str,
+    startedAt: str,
+    workingSetBytes: num,
+    managedHeapBytes: num,
+    privateBytes: num.optional(),
+  }),
   devices: z.array(
     z.looseObject({
       id: str,
@@ -281,13 +338,16 @@ const systemStateSchema = z.looseObject({
         }),
       ),
       lcd: z.looseObject({ width: num, height: num, isCircular: bool, maxFramesPerSecond: num }).nullable(),
+      supportStatus: z.enum(DEVICE_SUPPORT_STATUSES).optional(),
+      statusReason: str.nullable().optional(),
     }),
   ),
   profile: z.looseObject({
     canvas: canvasShape,
-    effect: z.looseObject({ effectId: str, parameters: z.record(str, z.unknown()) }),
+    effect: z.looseObject({ effectId: str, parameters: z.record(str, z.unknown()), enabled: bool.optional() }),
     fanCurves: z.array(z.looseObject({ id: str, deviceId: str, channelId: str, points: z.array(z.looseObject({})) })),
     lcd: z.looseObject({ mode: z.enum(LCD_MODES), sensorSelectors: z.array(str) }),
+    displays: z.record(str, z.looseObject({ mode: z.enum(LCD_MODES), sensorSelectors: z.array(str) })).optional(),
     colorCorrections: z.array(z.looseObject({ deviceId: str, gamma: num, whiteBalance: str })).optional(),
   }),
   effectiveCanvas: canvasShape,
@@ -295,7 +355,17 @@ const systemStateSchema = z.looseObject({
     z.looseObject({
       id: str,
       name: str,
-      parameters: z.array(z.looseObject({ key: str, kind: str, minColors: num, maxColors: num })),
+      category: z.enum(EFFECT_CATEGORIES).optional(),
+      usesAudio: bool.optional(),
+      parameters: z.array(
+        z.looseObject({
+          key: str,
+          kind: z.enum(EFFECT_PARAMETER_KINDS),
+          minColors: num,
+          maxColors: num,
+          options: z.array(z.looseObject({ value: str, label: str })).nullable().optional(),
+        }),
+      ),
     }),
   ),
   telemetry: z.looseObject({
@@ -306,6 +376,7 @@ const systemStateSchema = z.looseObject({
   }),
   fanStatus: z.array(z.looseObject({ curveId: str, appliedDuty: num, targetDuty: num, failsafe: bool })),
   warnings: z.array(str),
+  performance: performanceShape.optional(),
 });
 
 /** Logs a warning when a snapshot does not look like the contract; never blocks rendering. */

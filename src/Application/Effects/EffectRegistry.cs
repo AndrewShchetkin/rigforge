@@ -23,6 +23,16 @@ public sealed partial class EffectRegistry
             [SpectrumCycleEffect.EffectId] = (SpectrumCycleEffect.Info, () => new SpectrumCycleEffect()),
             [TemperatureEffect.EffectId] = (TemperatureEffect.Info, () => new TemperatureEffect()),
             [AmbilightEffect.EffectId] = (AmbilightEffect.Info, () => new AmbilightEffect(screenCapturer)),
+            [AuroraEffect.EffectId] = (AuroraEffect.Info, () => new AuroraEffect()),
+            [SpiralVortexEffect.EffectId] = (SpiralVortexEffect.Info, () => new SpiralVortexEffect()),
+            [RadialPulseEffect.EffectId] = (RadialPulseEffect.Info, () => new RadialPulseEffect()),
+            [CyberWaveEffect.EffectId] = (CyberWaveEffect.Info, () => new CyberWaveEffect()),
+            [PlasmaStormEffect.EffectId] = (PlasmaStormEffect.Info, () => new PlasmaStormEffect()),
+            [FireLavaEffect.EffectId] = (FireLavaEffect.Info, () => new FireLavaEffect()),
+            [MatrixRainEffect.EffectId] = (MatrixRainEffect.Info, () => new MatrixRainEffect()),
+            [StarlightEffect.EffectId] = (StarlightEffect.Info, () => new StarlightEffect()),
+            [MeteorScannerEffect.EffectId] = (MeteorScannerEffect.Info, () => new MeteorScannerEffect()),
+            [AudioReactiveEffect.EffectId] = (AudioReactiveEffect.Info, () => new AudioReactiveEffect()),
         };
 
         if (external is null)

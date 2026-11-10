@@ -24,13 +24,6 @@
     <ProjectReference Include="..\Infrastructure.Linux\RigForge.Infrastructure.Linux.csproj" />
   </ItemGroup>
 
-  <!-- SkiaSharp ships a ~90 MB native libSkiaSharp.pdb among its runtime assets; package symbols do not belong in a deployment. -->
-  <Target Name="ExcludePackageSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
-    <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' AND '%(ResolvedFileToPublish.NuGetPackageId)' != ''" />
-    </ItemGroup>
-  </Target>
-
   <ItemGroup>
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

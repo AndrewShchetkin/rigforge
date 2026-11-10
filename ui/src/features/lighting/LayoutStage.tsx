@@ -1,16 +1,28 @@
-import type Konva from 'konva';
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import Konva from 'konva';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { Image as CanvasImage, Layer, Rect, Shape, Stage, Transformer } from 'react-konva';
 import type { VirtualCanvas } from '../../api/contracts.ts';
-import { clamp } from '../../lib/math.ts';
 import { useElementWidth } from '../../lib/useElementWidth.ts';
 import { placementKey, zoneKey, type ZoneRef } from '../../lib/zones.ts';
 import { useCanvasPreviewStore } from '../../state/hooks.ts';
-import { GRID_STEP, ROTATION_SNAPS, segmentLedOffsets, type PlacementPatch } from './layoutModel.ts';
+import {
+  GRID_STEP,
+  ROTATION_SNAPS,
+  segmentLedOffsets,
+  zoomFromWheel,
+  zoomViewAt,
+  type CanvasView,
+  type PlacementPatch,
+  type SnapStep,
+  type StageMetrics,
+} from './layoutModel.ts';
 import { ZoneNode } from './ZoneNode.tsx';
 
 const MIN_BOX_PX = 8;
 const ACCENT = '#a78bfa';
+
+// Middle-click pans the canvas. Konva would otherwise treat button 1 as a zone drag.
+Konva.dragButtons = [0];
 
 const limitBox: NonNullable<Konva.TransformerConfig['boundBoxFunc']> = (oldBox, newBox) =>
   Math.abs(newBox.width) < MIN_BOX_PX || Math.abs(newBox.height) < MIN_BOX_PX ? oldBox : newBox;
@@ -89,20 +101,46 @@ interface LayoutStageProps {
   canvas: VirtualCanvas;
   zones: ReadonlyMap<string, ZoneRef>;
   selectedKey: string | null;
+  view: CanvasView;
+  snap: SnapStep;
+  metricsRef: { current: StageMetrics };
   onSelect: (key: string | null) => void;
   onChange: (key: string, patch: PlacementPatch) => void;
+  onViewChange: Dispatch<SetStateAction<CanvasView>>;
 }
 
 /** Konva stage that fits the container width and keeps the canvas aspect ratio. */
-export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKey, onSelect, onChange }: LayoutStageProps) {
-  const [containerRef, containerWidth] = useElementWidth<HTMLDivElement>();
+export const LayoutStage = memo(function LayoutStage({
+  canvas,
+  zones,
+  selectedKey,
+  view,
+  snap,
+  metricsRef,
+  onSelect,
+  onChange,
+  onViewChange,
+}: LayoutStageProps) {
+  const [setMeasured, containerWidth] = useElementWidth<HTMLDivElement>();
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
+  const stageRef = useRef<Konva.Stage>(null);
   const nodesRef = useRef(new Map<string, Konva.Group>());
+  const panSession = useRef<{ lastX: number; lastY: number } | null>(null);
   const ready = containerWidth > 0 && canvas.width > 0;
   const scale = ready ? containerWidth / canvas.width : 1;
   const stageHeight = Math.round(canvas.height * scale);
+  const viewScale = scale * view.zoom;
   const selectedPresent = canvas.placements.some((placement) => placementKey(placement) === selectedKey);
   const ledOffsets = useMemo(() => segmentLedOffsets(canvas.placements), [canvas.placements]);
+
+  const bindContainer = useCallback(
+    (node: HTMLDivElement | null) => {
+      setContainer(node);
+      setMeasured(node);
+    },
+    [setMeasured],
+  );
 
   const registerNode = useCallback((key: string, node: Konva.Group | null) => {
     if (node) {
@@ -112,11 +150,60 @@ export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKe
     }
   }, []);
 
-  // Keeps the zone origin on the visible stage while dragging (positions are absolute stage pixels).
-  const dragBound = useCallback(
-    (position: Konva.Vector2d) => ({ x: clamp(position.x, 0, containerWidth), y: clamp(position.y, 0, stageHeight) }),
-    [containerWidth, stageHeight],
-  );
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    metricsRef.current = { baseScale: scale, width: containerWidth, height: stageHeight };
+  }, [metricsRef, ready, scale, containerWidth, stageHeight]);
+
+  useEffect(() => {
+    if (!container) {
+      return;
+    }
+    const blockBrowserZoom = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+      }
+    };
+    container.addEventListener('wheel', blockBrowserZoom, { passive: false });
+    return () => container.removeEventListener('wheel', blockBrowserZoom);
+  }, [container]);
+
+  useEffect(() => {
+    const endPan = () => {
+      if (panSession.current === null) {
+        return;
+      }
+      panSession.current = null;
+      const node = stageRef.current?.container();
+      if (node) {
+        node.style.cursor = '';
+      }
+    };
+    const onMove = (event: MouseEvent) => {
+      const session = panSession.current;
+      if (session === null) {
+        return;
+      }
+      const dx = event.clientX - session.lastX;
+      const dy = event.clientY - session.lastY;
+      session.lastX = event.clientX;
+      session.lastY = event.clientY;
+      if (dx === 0 && dy === 0) {
+        return;
+      }
+      onViewChange((current) => ({ ...current, panX: current.panX + dx, panY: current.panY + dy }));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', endPan);
+    window.addEventListener('blur', endPan);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', endPan);
+      window.removeEventListener('blur', endPan);
+    };
+  }, [onViewChange]);
 
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -128,22 +215,80 @@ export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKe
     transformer.getLayer()?.batchDraw();
   }, [selectedKey, selectedPresent, ready]);
 
-  const deselectOnEmpty = (event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
-    if (event.target === event.target.getStage()) {
+  const handleWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
+    const native = event.evt;
+    if (!native.ctrlKey && !native.metaKey) {
+      return;
+    }
+    native.preventDefault();
+    const stage = event.target.getStage();
+    const pointer = stage?.getPointerPosition();
+    if (!pointer) {
+      return;
+    }
+    const pointerX = pointer.x;
+    const pointerY = pointer.y;
+    const deltaY = native.deltaY;
+    const deltaMode = native.deltaMode;
+    onViewChange((current) => {
+      const nextZoom = zoomFromWheel(current.zoom, deltaY, deltaMode);
+      if (nextZoom === current.zoom) {
+        return current;
+      }
+      return zoomViewAt(current, scale, pointerX, pointerY, nextZoom);
+    });
+  };
+
+  const handleMouseDown = (event: Konva.KonvaEventObject<MouseEvent>) => {
+    const native = event.evt;
+    const onBackground = event.target === event.target.getStage();
+    const middle = native.button === 1;
+    const altBackground = native.button === 0 && native.altKey && onBackground;
+    if (middle || altBackground) {
+      native.preventDefault();
+      panSession.current = { lastX: native.clientX, lastY: native.clientY };
+      const node = event.target.getStage()?.container();
+      if (node) {
+        node.style.cursor = 'grabbing';
+      }
+      return;
+    }
+    if (onBackground) {
       onSelect(null);
     }
   };
 
   return (
-    <div ref={containerRef} className="w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+    <div
+      ref={bindContainer}
+      className="w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+      onMouseDown={(event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+        }
+      }}
+      onAuxClick={(event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+        }
+      }}
+    >
       {ready && (
         <Stage
+          ref={stageRef}
           width={containerWidth}
           height={stageHeight}
-          scaleX={scale}
-          scaleY={scale}
-          onMouseDown={deselectOnEmpty}
-          onTouchStart={deselectOnEmpty}
+          x={view.panX}
+          y={view.panY}
+          scaleX={viewScale}
+          scaleY={viewScale}
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onTouchStart={(event) => {
+            if (event.target === event.target.getStage()) {
+              onSelect(null);
+            }
+          }}
         >
           <Layer listening={false}>
             <CanvasBackground width={canvas.width} height={canvas.height} />
@@ -159,9 +304,15 @@ export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKe
                   previewKey={previewKey}
                   placement={placement}
                   zone={zones.get(previewKey)?.zone}
+                  deviceName={zones.get(previewKey)?.device.name}
                   selected={key === selectedKey}
                   scale={scale}
-                  dragBound={dragBound}
+                  zoom={view.zoom}
+                  panX={view.panX}
+                  panY={view.panY}
+                  canvasWidth={canvas.width}
+                  canvasHeight={canvas.height}
+                  snap={snap}
                   ledOffset={ledOffsets.get(key) ?? 0}
                   onSelect={onSelect}
                   onChange={onChange}
@@ -176,7 +327,7 @@ export const LayoutStage = memo(function LayoutStage({ canvas, zones, selectedKe
               rotationSnaps={ROTATION_SNAPS}
               rotationSnapTolerance={7.5}
               ignoreStroke
-              anchorSize={9}
+              anchorSize={view.zoom > 0 ? 9 / view.zoom : 9}
               anchorCornerRadius={2}
               anchorStroke={ACCENT}
               anchorFill="#18181b"

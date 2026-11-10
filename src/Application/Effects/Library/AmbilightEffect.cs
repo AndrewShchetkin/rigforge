@@ -13,7 +13,9 @@ internal sealed class AmbilightEffect : IEffect
 
     public static readonly EffectDescriptor Info = new(
         EffectId, "Ambilight", "Mirrors the screen content; place zones around the canvas like around your monitor.",
-        IsAnimated: true, Parameters: []);
+        IsAnimated: true,
+        Parameters: [],
+        Category: EffectCategory.Reactive);
 
     private readonly IScreenCapturer _capturer;
     private readonly ScreenFrameBuffer _frame = new();

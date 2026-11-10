@@ -298,7 +298,13 @@ public sealed partial class WasmEffectCatalog : IExternalEffectCatalog, IDisposa
             definitions.Add(definition);
         }
 
-        descriptor = new EffectDescriptor(id, manifest.Name.Trim(), manifest.Description.Trim(), manifest.IsAnimated, definitions);
+        descriptor = new EffectDescriptor(
+            id,
+            manifest.Name.Trim(),
+            manifest.Description.Trim(),
+            manifest.IsAnimated,
+            definitions,
+            Category: EffectCategory.Custom);
         reason = "";
         return true;
     }

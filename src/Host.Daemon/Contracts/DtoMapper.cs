@@ -1,4 +1,5 @@
 using RigForge.Application.Cooling;
+using RigForge.Application.Diagnostics;
 using RigForge.Application.Effects;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
@@ -21,7 +22,9 @@ internal static class DtoMapper
         device is IFanController fans && device.Capabilities.HasFlag(DeviceCapabilities.FanControl) ? fans.Channels.Select(ToDto).ToArray() : [],
         device is IAioLcdDevice lcd && device.Capabilities.HasFlag(DeviceCapabilities.Lcd)
             ? new LcdInfoDto(lcd.Lcd.Width, lcd.Lcd.Height, lcd.Lcd.IsCircular, lcd.Lcd.MaxFramesPerSecond)
-            : null);
+            : null,
+        device.SupportStatus,
+        device.StatusReason);
 
     public static RgbZoneDto ToDto(RgbZone zone) => new(
         zone.Id,
@@ -43,9 +46,41 @@ internal static class DtoMapper
         status.CurveId, status.DeviceId, status.ChannelId, status.Temperature, status.TargetDuty, status.AppliedDuty, status.Failsafe, status.Message);
 
     public static EffectDescriptorDto ToDto(EffectDescriptor effect) => new(
-        effect.Id, effect.Name, effect.Description, effect.IsAnimated,
-        effect.Parameters.Select(p => new EffectParameterDefinitionDto(
-            p.Key, p.Label, p.Kind, p.DefaultValue, p.Min, p.Max, p.Step, p.Unit, p.MinColors, p.MaxColors)).ToArray());
+        effect.Id,
+        effect.Name,
+        effect.Description,
+        effect.IsAnimated,
+        effect.Parameters.Select(ToDto).ToArray(),
+        effect.Category,
+        effect.UsesAudio);
+
+    public static EffectParameterDefinitionDto ToDto(EffectParameterDefinition parameter) => new(
+        parameter.Key,
+        parameter.Label,
+        parameter.Kind,
+        parameter.DefaultValue,
+        parameter.Min,
+        parameter.Max,
+        parameter.Step,
+        parameter.Unit,
+        parameter.MinColors,
+        parameter.MaxColors,
+        parameter.Options?.Select(option => new EffectSelectOptionDto(option.Value, option.Label)).ToArray());
+
+    public static PerformanceMetricsDto ToDto(PerformanceSnapshot snapshot) => new(
+        snapshot.Timestamp,
+        snapshot.CpuPercent,
+        snapshot.PrivateBytes,
+        snapshot.WorkingSetBytes,
+        snapshot.ManagedHeapBytes,
+        snapshot.EffectFps,
+        snapshot.FrameTimeMicroseconds,
+        snapshot.RenderMode,
+        snapshot.ActiveRgbDevices,
+        snapshot.TotalControlledLeds,
+        snapshot.Gen0Collections,
+        snapshot.Gen1Collections,
+        snapshot.Gen2Collections);
 
     public static LedPreviewDto ToDto(IReadOnlyList<ZonePreview> preview) =>
         new(preview.Select(z => new ZonePreviewDto(z.DeviceId, z.ZoneId, z.Rgb)).ToArray());

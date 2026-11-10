@@ -1,5 +1,6 @@
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import type { LedTopology, ZonePlacement } from '../../api/contracts.ts';
+import { useToast } from '../../components/feedback/useToast.ts';
 import { Button } from '../../components/ui/Button.tsx';
 import { Field } from '../../components/ui/Field.tsx';
 import { NumberField } from '../../components/ui/NumberField.tsx';
@@ -8,19 +9,16 @@ import { Toggle } from '../../components/ui/Toggle.tsx';
 import { controlClass } from '../../components/ui/styles.ts';
 import { clamp } from '../../lib/math.ts';
 import { placementKey, zoneKey, type ZoneRef } from '../../lib/zones.ts';
-import { MIN_ZONE_SIZE, normalizeRotation, type PlacementPatch } from './layoutModel.ts';
+import { useDaemonApi } from '../../state/hooks.ts';
+import { MIN_ZONE_SIZE, normalizeRotation, type PlacementPatch, type SnapStep } from './layoutModel.ts';
 
-const TOPOLOGY_OPTIONS: { value: 'default' | LedTopology; label: string }[] = [
-  { value: 'default', label: 'Hardware default' },
-  { value: 'Linear', label: 'Linear' },
-  { value: 'Ring', label: 'Ring' },
-  { value: 'Matrix2D', label: 'Matrix' },
-];
+const TOPOLOGY_VALUES: readonly LedTopology[] = ['Point', 'Linear', 'Ring', 'Matrix2D', 'Composite'];
 
 interface ZoneInspectorProps {
   placements: readonly ZonePlacement[];
   zones: ReadonlyMap<string, ZoneRef>;
   selected: ZonePlacement | null;
+  snap: SnapStep;
   onSelect: (key: string | null) => void;
   onChange: (key: string, patch: PlacementPatch) => void;
   onAddSegment: () => void;
@@ -32,11 +30,15 @@ export function ZoneInspector({
   placements,
   zones,
   selected,
+  snap,
   onSelect,
   onChange,
   onAddSegment,
   onRemoveSegment,
 }: ZoneInspectorProps) {
+  const api = useDaemonApi();
+  const toast = useToast();
+  const [identifying, setIdentifying] = useState(false);
   const selectedKey = selected ? placementKey(selected) : '';
   const ref = selected ? zones.get(zoneKey(selected.deviceId, selected.zoneId)) : undefined;
   const selectedZone = selected ? zoneKey(selected.deviceId, selected.zoneId) : null;
@@ -63,6 +65,24 @@ export function ZoneInspector({
     }),
   ];
 
+  const blink = async () => {
+    if (!selected || identifying) {
+      return;
+    }
+    const deviceId = selected.deviceId;
+    const zoneId = selected.zoneId;
+    const label = selected.name || ref?.zone.name || zoneId;
+    setIdentifying(true);
+    try {
+      const flashed = await api.identifyDevice(deviceId, zoneId);
+      if (flashed) {
+        toast.success(`Flashing ${label} cyan for 2 seconds.`);
+      }
+    } finally {
+      setIdentifying(false);
+    }
+  };
+
   return (
     <aside aria-label="Selected zone" className="space-y-4">
       <SelectField
@@ -74,21 +94,26 @@ export function ZoneInspector({
       {selected === null ? (
         <p className="text-sm text-zinc-500">
           Click a zone on the canvas or pick it above. Drag to move it; use the handles to resize and rotate (rotation
-          snaps to 15°). With the canvas focused, arrow keys nudge the selected zone (Shift: 10 units).
+          snaps to 15°). {canvasHelp(snap)}
         </p>
       ) : (
         <div key={selectedKey} className="space-y-4">
           <div>
             <p className="text-sm font-medium text-zinc-100">{selected.name || ref?.zone.name || selected.zoneId}</p>
             <p className="text-xs text-zinc-500">
-              {ref ? `${ref.device.name} · ${selected.topology ?? ref.zone.topology} · ${ref.zone.ledCount} LEDs` : selected.deviceId}
+              {ref
+                ? `${ref.device.name} · ${topologyTitle(selected.topology ?? ref.zone.topology)} · ${ref.zone.ledCount} LEDs`
+                : selected.deviceId}
             </p>
           </div>
+          <div className="space-y-1.5">
+            <Button size="sm" className="w-full" onClick={() => void blink()} disabled={identifying}>
+              {identifying ? 'Blinking…' : 'Blink / Identify'}
+            </Button>
+            <p className="text-xs text-zinc-500">Flashes this zone cyan on the hardware for 2 seconds.</p>
+          </div>
           {selected.segmentId && (
-            <SegmentNameField
-              value={selected.name ?? ''}
-              onChange={(name) => onChange(selectedKey, { name })}
-            />
+            <SegmentNameField value={selected.name ?? ''} onChange={(name) => onChange(selectedKey, { name })} />
           )}
           <Toggle
             label="Enabled"
@@ -133,26 +158,59 @@ export function ZoneInspector({
                     ? `1–${ledFieldMax} · ${Math.max(0, remaining)} left of ${headerMax}`
                     : `1–${headerMax}`
                 }
-                onChange={(count) =>
-                  onChange(selectedKey, { ledCount: clamp(Math.round(count), 1, ledFieldMax) })
-                }
+                onChange={(count) => onChange(selectedKey, { ledCount: clamp(Math.round(count), 1, ledFieldMax) })}
               />
             )}
           </div>
+          <TopologyFields
+            placement={selected}
+            hardwareTopology={ref?.zone.topology}
+            onChange={(patch) => onChange(selectedKey, patch)}
+          />
           {ref?.zone.isResizable && (
-            <SegmentControls
-              placement={selected}
-              maxLedCount={ref.zone.maxLedCount}
-              siblingCount={siblings.length}
-              onChange={(patch) => onChange(selectedKey, patch)}
-              onAddSegment={onAddSegment}
-              onRemoveSegment={onRemoveSegment}
-            />
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={onAddSegment}>
+                  Add segment
+                </Button>
+                <Button size="sm" onClick={onRemoveSegment} disabled={siblings.length <= 1}>
+                  Remove segment
+                </Button>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Segments of this header are sent in canvas order, up to {ref.zone.maxLedCount} LEDs.
+              </p>
+            </div>
           )}
+          <p className="text-xs text-zinc-500">{canvasHelp(snap)}</p>
         </div>
       )}
     </aside>
   );
+}
+
+function canvasHelp(snap: SnapStep): string {
+  const nudge = snap === 0 ? 'Arrow keys move 1 unit (Shift: 10).' : `Arrow keys move ${snap} px (Shift: ${snap * 2}).`;
+  return `${nudge} Ctrl or ⌘ and the wheel zooms from 50% to 300%. Middle-drag, or Alt-drag on empty canvas, pans. Fit resets the view.`;
+}
+
+function topologyTitle(topology: LedTopology): string {
+  switch (topology) {
+    case 'Matrix2D':
+      return 'Matrix';
+    case 'Composite':
+      return 'Composite';
+    case 'Point':
+      return 'Point';
+    case 'Linear':
+      return 'Linear';
+    case 'Ring':
+      return 'Ring';
+    default: {
+      const exhaustive: never = topology;
+      return exhaustive;
+    }
+  }
 }
 
 /** Null on the only box is the live zone length. Beside other segments, null is not the whole header. */
@@ -178,36 +236,48 @@ function SegmentNameField({ value, onChange }: { value: string; onChange: (name:
   );
 }
 
-function SegmentControls({
+function TopologyFields({
   placement,
-  maxLedCount,
-  siblingCount,
+  hardwareTopology,
   onChange,
-  onAddSegment,
-  onRemoveSegment,
 }: {
   placement: ZonePlacement;
-  maxLedCount: number;
-  siblingCount: number;
+  hardwareTopology: LedTopology | undefined;
   onChange: (patch: PlacementPatch) => void;
-  onAddSegment: () => void;
-  onRemoveSegment: () => void;
 }) {
   const topology = placement.topology ?? 'default';
+  const options = [
+    {
+      value: 'default' as const,
+      label: hardwareTopology ? `Hardware default (${topologyTitle(hardwareTopology)})` : 'Hardware default',
+    },
+    ...TOPOLOGY_VALUES.map((value) => ({ value, label: topologyTitle(value) })),
+  ];
   return (
     <div className="space-y-4">
       <SelectField
         label="Topology"
         value={topology}
-        options={TOPOLOGY_OPTIONS}
-        onChange={(value) =>
+        options={options}
+        onChange={(value) => {
+          if (value === 'default') {
+            onChange({ topology: null });
+            return;
+          }
           onChange({
-            topology: value === 'default' ? null : value,
-            matrixColumns: value === 'Matrix2D' ? (placement.matrixColumns ?? 8) : placement.matrixColumns,
-            ...(value === 'Matrix2D' ? {} : { serpentine: false }),
-          })
-        }
+            topology: value,
+            ...(value === 'Matrix2D'
+              ? { matrixColumns: placement.matrixColumns ?? 8 }
+              : { serpentine: false }),
+          });
+        }}
       />
+      {topology === 'default' && (
+        <p className="text-xs text-zinc-500">
+          Hardware default keeps the device&apos;s {hardwareTopology ? topologyTitle(hardwareTopology) : 'physical'} LED
+          positions.
+        </p>
+      )}
       {topology === 'Matrix2D' && (
         <>
           <NumberField
@@ -225,17 +295,6 @@ function SegmentControls({
           />
         </>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={onAddSegment}>
-          Add segment
-        </Button>
-        <Button size="sm" onClick={onRemoveSegment} disabled={siblingCount <= 1}>
-          Remove segment
-        </Button>
-      </div>
-      <p className="text-xs text-zinc-500">
-        Segments of this header are sent in canvas order, up to {maxLedCount} LEDs.
-      </p>
     </div>
   );
 }

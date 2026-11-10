@@ -6,6 +6,22 @@ public enum DeviceProtocolFamily
     NzxtKraken,
     NzxtHue2,
     KingstonFuryDdr5,
+    CorsairLightingNode,
+    CorsairCommanderCore,
+    MsiMysticLightUsb,
+    GigabyteFusion2Usb,
+    AsRockPolychromeUsb,
+    LianLiUniHub,
+    CoolerMasterArgb,
+    LogitechHidPp,
+    RazerChromaHid,
+    QmkVialRgb,
+    EneSmbusDram,
+    CorsairSmbusDram,
+    AsusAuraGpuI2c,
+    OpenRgbBridge,
+    DetectedUnmanaged,
+    NzxtKrakenX3,
 }
 
 public sealed record DeviceDisplayManifest(

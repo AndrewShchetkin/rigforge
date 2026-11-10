@@ -20,6 +20,7 @@ export type SensorRole =
 export type FanControlMode = 'Curve' | 'Fixed';
 export type LcdMode = 'Dashboard' | 'SingleSensor' | 'Graph' | 'BuiltInLiquid';
 export type PreviewChannel = 'Leds' | 'Lcd';
+export type DeviceSupportStatus = 'Supported' | 'TelemetryOnly' | 'Unmanaged';
 
 /** Sensor selector: either an exact sensor id or `role:<SensorRole>` (e.g. `role:CpuTemperature`). */
 export type SensorSelector = string;
@@ -29,8 +30,29 @@ export interface DaemonInfoDto {
   version: string;
   platform: string;
   startedAt: string; // ISO-8601
+  privateBytes: number;
   workingSetBytes: number;
   managedHeapBytes: number;
+}
+
+/** What the lighting loop is doing. `Sleeping` and `Blackout` wait without burning CPU. */
+export type EffectRenderMode = 'Sleeping' | 'Blackout' | 'DirectSampling' | 'CanvasRaster';
+
+/** Process and lighting-loop sample, pushed about once a second. */
+export interface PerformanceMetricsDto {
+  timestamp: string;
+  cpuPercent: number;
+  privateBytes: number;
+  workingSetBytes: number;
+  managedHeapBytes: number;
+  effectFps: number;
+  frameTimeMicroseconds: number;
+  renderMode: EffectRenderMode;
+  activeRgbDevices: number;
+  totalControlledLeds: number;
+  gen0Collections: number;
+  gen1Collections: number;
+  gen2Collections: number;
 }
 
 export interface LedPositionDto {
@@ -75,6 +97,9 @@ export interface DeviceDto {
   zones: RgbZoneDto[];
   fanChannels: FanChannelDto[];
   lcd: LcdInfoDto | null;
+  supportStatus: DeviceSupportStatus;
+  /** Why the device is telemetry-only or unmanaged, when the daemon has a reason. */
+  statusReason: string | null;
 }
 
 export interface SensorReadingDto {
@@ -103,10 +128,16 @@ export interface FanStatusDto {
   message: string | null;
 }
 
-export type EffectParameterKind = 'ColorList' | 'FloatRange' | 'SensorSelector';
+export type EffectCategory = 'Flowing' | 'Spatial' | 'Reactive' | 'Static' | 'Custom';
+export type EffectParameterKind = 'ColorList' | 'FloatRange' | 'SensorSelector' | 'Boolean' | 'IntRange' | 'Select';
 
 /** Raw value of one effect parameter, as stored in `EffectSettings.parameters`. */
-export type EffectParameterValue = string[] | number | string;
+export type EffectParameterValue = string[] | number | string | boolean;
+
+export interface EffectSelectOptionDto {
+  value: string;
+  label: string;
+}
 
 export interface EffectParameterDefinitionDto {
   key: string;
@@ -119,6 +150,8 @@ export interface EffectParameterDefinitionDto {
   unit: string | null;
   minColors: number;
   maxColors: number;
+  /** Choices for a `Select` parameter. Absent for every other kind. */
+  options?: EffectSelectOptionDto[] | null;
 }
 
 export interface EffectDescriptorDto {
@@ -127,6 +160,8 @@ export interface EffectDescriptorDto {
   description: string;
   isAnimated: boolean;
   parameters: EffectParameterDefinitionDto[];
+  category: EffectCategory;
+  usesAudio: boolean;
 }
 
 export interface ZonePreviewDto {
@@ -176,6 +211,11 @@ export interface VirtualCanvas {
 
 export interface EffectSettings {
   effectId: string;
+  /**
+   * Master lighting power. False blacks out every LED and keeps `brightness` for when power returns.
+   * Missing values from older profiles mean on.
+   */
+  enabled: boolean;
   /** 0..1 */
   brightness: number;
   /** Effect-specific values by parameter key, described by `EffectDescriptorDto.parameters`. */
@@ -230,6 +270,11 @@ export interface RigProfile {
   effect: EffectSettings;
   fanCurves: FanCurve[];
   lcd: LcdSettings;
+  /**
+   * Per-device LCD settings keyed by device id. `lcd` remains the fallback for devices without an entry.
+   * Older daemons omit this.
+   */
+  displays?: Record<string, LcdSettings>;
   /** Older daemons omit this. Treat a missing array as no corrections. */
   colorCorrections?: DeviceColorCorrection[];
 }
@@ -245,6 +290,7 @@ export interface SystemStateDto {
   fanStatus: FanStatusDto[];
   /** Human-readable problems, e.g. conflicting vendor software running. */
   warnings: string[];
+  performance: PerformanceMetricsDto;
 }
 
 // ---------- Hub API ----------
@@ -261,12 +307,20 @@ export interface DaemonHubMethods {
   RescanDevices(): Promise<SystemStateDto>;
   /** Opt-in to high-rate preview streams; only enable while the corresponding page is visible. */
   SetPreview(channel: PreviewChannel, enabled: boolean): Promise<void>;
+  /** Flash one device, or one of its zones, so the user can see which hardware it is. */
+  IdentifyDevice(deviceId: string, zoneId?: string | null): Promise<void>;
+  ExportProfile(): Promise<RigProfile>;
+  ImportProfile(profile: RigProfile): Promise<SystemStateDto>;
+  UpsertDisplay(deviceId: string, lcd: LcdSettings): Promise<SystemStateDto>;
+  RemoveDisplay(deviceId: string): Promise<SystemStateDto>;
 }
 
 /** Server -> client events (connection.on). */
 export interface DaemonHubEvents {
   /** ~1 Hz */
   Telemetry: (telemetry: TelemetryDto) => void;
+  /** ~1 Hz. Kept off the reducer so heavy pages do not re-render on every sample. */
+  Performance: (metrics: PerformanceMetricsDto) => void;
   /** ~1 Hz */
   FanStatus: (status: FanStatusDto[]) => void;
   /** ~20 Hz, only after SetPreview('Leds', true) */
