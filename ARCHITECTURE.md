@@ -15,7 +15,7 @@
 src/
   Core/                          доменные модели и порты, 0 зависимостей
   Application/                   движки: эффекты (60 FPS), охлаждение (1 Гц), LCD, телеметрия, профиль, валидация
-  Infrastructure.CrossPlatform/  HID-транспорт, 16 семейств RGB, OpenRGB SDK, NVML, libusb, JSON, WASM-эффекты
+  Infrastructure.CrossPlatform/  HID-транспорт, 19 семейств RGB (включая GPU I2C), OpenRGB SDK, NVML, libusb, JSON, WASM-эффекты
   Infrastructure.Windows/        DXGI Desktop Duplication, WASAPI Loopback, LibreHardwareMonitor (PawnIO), WinUSB, high-res таймер, Win32-сенсоры
   Infrastructure.Linux/          sysfs hwmon, X11/XWayland, PipeWire/PulseAudio, i2c-dev SMBus, clock_nanosleep, udev
   Host.Daemon/                   ASP.NET Core (Kestrel) + SignalR + REST/OpenAPI + BackgroundService-воркеры
@@ -46,7 +46,7 @@ Windows-классы помечены `[SupportedOSPlatform("windows")]`, и а�
 
 | Интерфейс | Назначение | Реализации |
 | --- | --- | --- |
-| `IRgbDevice` | зоны с нормализованными координатами LED, приём кадра | 16 семейств прямого кадра: HUE 2; Kraken X3 и Elite Ring; Aura, Mystic Light, Fusion 2.0, Polychrome; Corsair Node/Commander; UNI HUB; CM ARGB Gen2; FURY, ENE и Corsair DRAM; HID++ Lightsync; Razer Chroma; QMK/VialRGB; opt-in OpenRGB SDK |
+| `IRgbDevice` | зоны с нормализованными координатами LED, приём кадра | 19 семейств прямого кадра: HUE 2; Kraken X3 и Elite Ring; Aura, Mystic Light, Fusion 2.0, Polychrome; Corsair Node/Commander; UNI HUB; CM ARGB Gen2; FURY, ENE и Corsair DRAM; ASUS Aura, MSI Mystic Light и Gigabyte RGB Fusion на I2C видеокарты; HID++ Lightsync; Razer Chroma; QMK/VialRGB; opt-in OpenRGB SDK |
 | `IFanController` | каналы вентиляторов/помпы, `SetDuty`, `RestoreDefault` | Kraken, HUE 2, LHM Super I/O, sysfs hwmon |
 | `ISensorProvider` | телеметрия с семантическими ролями (`role:CpuTemperature`…) | Kraken, NVML, LHM, Win32, hwmon, /proc |
 | `IAioLcdDevice` | экран СЖО: кадр RGBA, яркость, возврат на экран прошивки | Kraken Z3/2023/2024 |
@@ -117,9 +117,9 @@ flowchart TB
 
 Для production-ready программы обнаружение и прямое управление подсветкой — ключевая возможность, наравне с холстом и эффектами. У пользователей разные устройства на разных контроллерах, портах и драйверах. Один эффект и одна цветокоррекция должны попадать на каждую зону, которую демон умеет писать. Устройство, которое видно, но не принимает кадр, — пробел продукта: его подсветка остаётся цветом чужой прошивки.
 
-Универсального драйвера «любой HID» нет и не планируется. Каждое семейство — свой `IDeviceProbe` и свой сборщик пакетов. Пишем только в регистры подсветки известного протокола и только туда, куда это позволяет железо. SPD, PMIC и неизвестные адреса SMBus не трогаем. Транспорты: USB HID, WinUSB/libusb, SMBus/I2C (PawnIO на Windows, `i2c-dev` на Linux) и каналы видеокарт, которые NVML не отдаёт.
+Универсального драйвера «любой HID» нет и не планируется. Каждое семейство — свой `IDeviceProbe` и свой сборщик пакетов. Пишем только в регистры подсветки известного протокола и только туда, куда это позволяет железо. SPD, PMIC и неизвестные адреса SMBus не трогаем. Транспорты: USB HID, WinUSB/libusb, SMBus/I2C (PawnIO на Windows, `i2c-dev` на Linux) и собственная I2C-шина видеокарты (`nvapi64.dll` на Windows, PCI-ограниченный `i2c-dev` на Linux), которую NVML не отдаёт.
 
-Кадр пишется в 16 семейств (раздел ниже). Манифест `devices/*.json` добавляет VID/PID в уже известное семейство. Новый протокол по-прежнему требует своей пробы и теста пакетов. GeForce остаётся телеметрией NVML: партнёрская подсветка без своего драйвера не получает кадр и показывается как `DeviceSupportStatus.Unmanaged`.
+Кадр пишется в 19 семейств (раздел ниже). Манифест `devices/*.json` добавляет VID/PID в уже известное семейство. Новый протокол по-прежнему требует своей пробы и теста пакетов. Телеметрию GeForce отдаёт NVML, а партнёрская I2C-подсветка (ASUS, MSI, Gigabyte; RTX 30/40/50) пишется отдельным каналом `IGpuI2cBus`. Карта без известного контроллера не получает кадр и показывается как `DeviceSupportStatus.Unmanaged`.
 
 `UnmanagedRgbControllerProbe` (этап 5) не пишет кадр. Vendor-HID известных RGB-вендоров (usage page ≥ `0xFF00`, отчёт не короче 8 байт), чей протокол ещё не реализован, остаётся в списке: имя, `VID:PID`, путь, `Capabilities = None`, `DeviceSupportStatus.Unmanaged`. Клавиатуры, мыши, аудио и consumer-интерфейсы отбрасываются. Один физический прибор — одна запись.
 
@@ -172,6 +172,8 @@ flowchart TB
 **ENE SMBus DRAM (Aura / Trident Z / Ballistix)** — только адреса `0x70..0x77` и `0x39..0x3C`. SPD `0x50..0x57` и PMIC `0x48..0x4F` режет `SmbusAddressFirewall`. 16-битный указатель ставится на регистр `0x00` (старший байт, затем младший), данные читаются с `0x81`. Порт данных `0x01` открывается после сигнатуры `AUDA` / `ENE ` / `DIMM`. Direct: `0x8021 = 0x01`, затем `0x8020 = 0x01`. Байты LED по `0x8100` идут в порядке R, B, G.
 
 **Corsair Vengeance / Dominator SMBus DRAM** — адреса `0x58..0x5F`, строго выше SPD. Перед direct читаются vendor `0x43 == 0x1B` и model `0x44 == 0x04`. Цвета: `0x31` включает режим, `0x32` применяет кадр; оба значения летучие. Импульс apply не кэшируется и уходит снова, когда цвет реально изменился.
+
+**GPU I2C RGB (ASUS Aura `0x67`, MSI Mystic Light `0x68`, Gigabyte RGB Fusion `0x75`/`0x71`)** — RGB-контроллер видеокарты сидит на её собственной I2C-шине (`IGpuI2cBus`), отдельной от SMBus материнской платы, поэтому запись подсветки не может попасть в SPD/PMIC. Карты опознаются по PCI-идентификатору и subsystem (`GpuPciCatalog`, RTX 30/40/50, плюс манифесты `devices/*.json` с `subVendorId`/`subDeviceId`/`i2cAddress`); незнакомая карта ASUS принимается только после read-only проверки имени контроллера `AUMA…`/`AURA…`. Транспорты: на Windows — пользовательский `nvapi64.dll` из драйвера NVIDIA (`NvAPI_I2CReadEx`/`NvAPI_I2CWriteEx`, внутренний порт 1, `NV_I2C_INFO_V3` 64 байта, DDC-порты не используются), **без прав администратора и без PawnIO**; на Linux — PCI-ограниченный `/dev/i2c-*` (`I2C_RDWR`, только внутренний адаптер `NVIDIA i2c adapter 1` под дискретным дисплейным контроллером `10de`, DDC/DP/HDMI/AUX отбрасываются) с реентерабельным `Monitor` и `flock(LOCK_EX)`. На шину допускаются только адреса `0x60..0x77` (`GpuI2cAddressFirewall`: EDID/DDC `0x50..0x57` и всё ниже `0x60` блокируются исключением до обращения к драйверу). `AcquireBusLock()` отдаёт один предвыделенный scope (на Windows ещё мьютекс `Access_PCI`), так что кадр идёт без аллокаций. Режим Direct не сохраняется во flash; при снятии зоны возвращается аппаратная радуга. Read-only диагностика `rigforge-scan gpu-i2c` читает имя контроллера и число LED без смены режима и цвета (RTX 5070 Ti TUF GAMING: `AUMA0-E6K5-1107`, 4 LED).
 
 **Logitech Lightsync HID++ 2.0 (VID `0x046D`)** — длинный отчёт `0x11`, 20 байт, usage page `0xFF00` / usage `0x0002`. Эффекты зон летучие, onboard-профиль не пишется.
 
@@ -303,7 +305,7 @@ RTX 5070 Ti через NVML; статус Kraken и Control Hub разобран
 Не проверено на железе: установка скважности помпы и вентиляторов (намеренно не трогались). Скважность для портов 4–5
 Control Hub — экстраполяция формата `62 01` на 5 каналов.
 
-Остаётся за кадром этого прогона: управление вентиляторами GPU, Native AOT, восстановление яркости LCD, бывшей до запуска (сейчас из профиля, 80 %). Подсветка GeForce своим каналом не пишется: NVML остаётся телеметрией, партнёрский USB без протокола показывается как `Unmanaged`. Полноэкранные игровые эффекты (*Pong*, *Mario*) и отдельное WebGL-превью в UI в рантайм не входят: семплинг считает демон, мини-превью галереи рисует canvas 2D.
+Остаётся за кадром этого прогона: управление вентиляторами GPU, Native AOT, восстановление яркости LCD, бывшей до запуска (сейчас из профиля, 80 %). Подсветка GeForce пишется собственным I2C-каналом (ASUS Aura / MSI Mystic Light / Gigabyte RGB Fusion, см. «Протоколы устройств»); NVML остаётся телеметрией, партнёрский USB без протокола показывается как `Unmanaged`. Полноэкранные игровые эффекты (*Pong*, *Mario*) и отдельное WebGL-превью в UI в рантайм не входят: семплинг считает демон, мини-превью галереи рисует canvas 2D.
 
 ## Дорожная карта развития (Public Distribution & Custom Effects)
 
@@ -317,4 +319,4 @@ Control Hub — экстраполяция формата `62 01` на 5 кан�
    - **Zero-Allocation протоколы (Реализовано):** `AuraUsbProtocol.WriteDirectPacket`, `NzxtProtocol.WriteHue2Packet` и `KingstonFuryDramProtocol.BuildFrameWrites` пишут пакеты и SMBus-команды напрямую в буфер вызывающего (`Span<byte>` / предвыделенный `KingstonRegisterWrite[]`), 0 аллокаций на кадр после прогрева для удержания управляемой кучи C# на уровне ~7–8 МБ при многочасовой работе. Писатели семейств этапа 5 заполняют тот же буфер вызывающего и не шлют команду сохранения во flash.
    - **Сегментирование ARGB-цепочек, Matrix2D и цветокоррекция (Реализовано):** один физический ARGB-порт раскладывается на независимые `ZonePlacement` (`segmentId`, своё положение и топология) в порядке цепочки; `LedTopology.Matrix2D` строит построчную сетку, `Serpentine` разворачивает нечётные ряды. Сумма `ledCount` сегментов меняет размер зоны. На устройство задаётся `DeviceColorCorrection` (гамма 0.5..3 и баланс белого `#RRGGBB`): `LedSamplePlan` заранее считает три таблицы по 256 байт и применяет их при прямом семплинге и при чтении холста без аллокаций на кадр.
 4. **Этап 4 (Реализовано):** per-device LCD `RigProfile.Displays[deviceId]` (до 16 записей). `LcdRenderEngine` берёт override устройства, иначе общий `Lcd`. REST: `PUT` и `DELETE /api/profile/displays/{deviceId}`. Экран Kraken отдаёт поток `Rgb565` или RGBX-бакет; виджеты рисуются в `Rgba8888`; превью холста подсветки — JPEG. Экраны остаются `IAioLcdDevice` с размером из `LcdInfo`.
-5. **Этап 5 (Реализовано):** прямой кадр на 16 семейств из раздела «Протоколы устройств» и карточка обнаруженного, но ещё не управляемого vendor-HID через `UnmanagedRgbControllerProbe` (`DeviceSupportStatus.Unmanaged`, имя и путь). NVML остаётся телеметрией и подсветку видеокарты не заменяет. Новый VID/PID известного семейства подключается манифестом. Новый протокол добавляется пробой и тестом пакетов по OpenRGB или liquidctl и проверяется на железе до того, как зона попадает в профиль.
+5. **Этап 5 (Реализовано):** прямой кадр на 16 семейств из раздела «Протоколы устройств» (плюс 3 семейства GPU I2C) и карточка обнаруженного, но ещё не управляемого vendor-HID через `UnmanagedRgbControllerProbe` (`DeviceSupportStatus.Unmanaged`, имя и путь). NVML остаётся телеметрией; подсветка видеокарты идёт собственным каналом GPU I2C. Новый VID/PID известного семейства подключается манифестом. Новый протокол добавляется пробой и тестом пакетов по OpenRGB или liquidctl и проверяется на железе до того, как зона попадает в профиль.

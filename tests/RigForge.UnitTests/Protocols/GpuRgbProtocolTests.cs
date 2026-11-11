@@ -892,6 +892,35 @@ public sealed class GpuRgbProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task Probe_cancelled_mid_scan_disposes_new_devices_and_unopened_buses_but_keeps_existing_devices()
+    {
+        var pci = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0x89F4);
+        var existingBus = AsusBus(pci, "AUMA0-E6K5-1107", 4);
+        var first = await NewProbe(new FakeGpuI2cBusFactory(existingBus)).ProbeAsync([], CancellationToken.None);
+        var existing = Assert.Single(first);
+
+        using var cts = new CancellationTokenSource();
+        var sameCard = AsusBus(pci, "AUMA0-E6K5-1107", 4);
+        var newCard = AsusBus(pci, "AUMA0-E6K5-1107", 4, busId: "NVAPI/GPU-1/I2C-1");
+        newCard.OnRead = cts.Cancel;
+        var neverOpened1 = AsusBus(pci, "AUMA0-E6K5-1107", 4, busId: "NVAPI/GPU-2/I2C-1");
+        var neverOpened2 = AsusBus(pci, "AUMA0-E6K5-1107", 4, busId: "NVAPI/GPU-3/I2C-1");
+        var factory = new FakeGpuI2cBusFactory(sameCard, newCard, neverOpened1, neverOpened2);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await NewProbe(factory).ProbeAsync(first, cts.Token));
+
+        Assert.True(sameCard.Disposed);
+        Assert.True(newCard.Disposed);
+        Assert.True(neverOpened1.Disposed);
+        Assert.True(neverOpened2.Disposed);
+        Assert.False(existingBus.Disposed);
+        Assert.Empty(neverOpened1.Calls);
+        await existing.DisposeAsync();
+        Assert.True(existingBus.Disposed);
+    }
+
+    [Fact]
     public async Task Probe_name_and_disabled_or_unavailable_backend_return_nothing()
     {
         var pci = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0x89F4);
@@ -1148,6 +1177,9 @@ internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string a
 
     public bool Record { get; set; } = true;
 
+    /// <summary>Invoked on every register read; lets a test cancel a scan while this bus is being probed.</summary>
+    public Action? OnRead { get; set; }
+
     public int WriteCount { get; private set; }
 
     public int LockCount { get; private set; }
@@ -1215,6 +1247,8 @@ internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string a
         {
             Calls.Add(new Call("R", slaveAddress, registerAddress.ToArray(), []));
         }
+
+        OnRead?.Invoke();
 
         if (FailReads || registerAddress.Length != 1 || registerAddress[0] != 0x81 || destination.Length != 1)
         {

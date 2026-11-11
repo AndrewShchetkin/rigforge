@@ -3,9 +3,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Runtime.Versioning;
 using RigForge.Core.Interfaces;
+using RigForge.Infrastructure.CrossPlatform.Gpu;
 using RigForge.Infrastructure.CrossPlatform.Smbus;
 using RigForge.Infrastructure.Linux.Audio;
 using RigForge.Infrastructure.Linux.Capture;
+using RigForge.Infrastructure.Linux.Gpu;
 using RigForge.Infrastructure.Linux.Hardware;
 using RigForge.Infrastructure.Linux.Platform;
 using RigForge.Infrastructure.Linux.Smbus;
@@ -22,6 +24,7 @@ public static class LinuxServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton<IScreenCapturer, LinuxX11ScreenCapturer>());
         services.Replace(ServiceDescriptor.Singleton<IAudioLevelProvider, LinuxPulsePipeWireAudioProvider>());
         services.Replace(ServiceDescriptor.Singleton<ISmbusControllerFactory, LinuxI2cSmbusControllerFactory>());
+        services.Replace(ServiceDescriptor.Singleton<IGpuI2cBusFactory, LinuxGpuI2cBusFactory>());
         services.AddSingleton<IDeviceProbe, SysfsHwmonProbe>();
         return services;
     }

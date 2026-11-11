@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using RigForge.Core.Models;
 using RigForge.Infrastructure.CrossPlatform.Manifests;
 
 namespace RigForge.Infrastructure.Linux.Udev;
@@ -17,8 +18,18 @@ public static class UdevRulesGenerator
     public static string GenerateDefault()
     {
         var catalog = new JsonDeviceManifestCatalog(string.Empty);
-        var devices = catalog.All
-            .Where(static manifest => manifest.VendorId > 0 && manifest.ProductId > 0)
+        return GenerateForManifests(catalog.All);
+    }
+
+    /// <summary>
+    /// Rules for the USB manifests in <paramref name="manifests"/>. PCI GPU manifests (<c>SubVendorId</c> set) are skipped:
+    /// their vendor id is a PCI id (for example NVIDIA <c>10de</c>), not a USB/hidraw one, and GPUs are reached through the
+    /// <c>i2c-dev</c> rule instead.
+    /// </summary>
+    internal static string GenerateForManifests(IEnumerable<DeviceManifest> manifests)
+    {
+        var devices = manifests
+            .Where(static manifest => manifest.SubVendorId is null && manifest.VendorId > 0 && manifest.ProductId > 0)
             .GroupBy(static manifest => manifest.VendorId)
             .OrderBy(static group => group.Key)
             .Select(group => (
@@ -54,7 +65,9 @@ public static class UdevRulesGenerator
         Line(builder, "# QMK / Vial raw HID on interface 1 (usage page 0xFF60 is not a udev match).");
         Line(builder, "KERNEL==\"hidraw*\", SUBSYSTEM==\"hidraw\", ENV{ID_USB_INTERFACE_NUM}==\"01\", TAG+=\"uaccess\"");
         Line(builder);
-        Line(builder, "# Chipset SMBus / i2c-dev adapters (DDR4/DDR5 RGB DRAM).");
+        Line(builder, "# i2c-dev adapters: chipset SMBus (DDR4/DDR5 RGB DRAM) and the internal GPU I2C RGB adapter of NVIDIA cards");
+        Line(builder, "# (ASUS Aura / MSI Mystic Light / Gigabyte RGB Fusion GPU). RigForge only opens the PCI-scoped internal port-1 adapter");
+        Line(builder, "# and never monitor DDC buses; every transfer is limited to 0x60..0x77 by the GPU I2C address firewall.");
         Line(builder, "KERNEL==\"i2c-[0-9]*\", SUBSYSTEM==\"i2c-dev\", TAG+=\"uaccess\"");
         Line(builder);
         Line(builder, "# Read-only SMBIOS/DMI so a non-root process can match DIMM identity before any SMBus traffic.");

@@ -28,53 +28,79 @@ internal sealed partial class GpuRgbProbe(
     public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(CancellationToken cancellationToken) =>
         ProbeAsync([], cancellationToken);
 
-    public Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(
+    public async Task<IReadOnlyList<IHardwareDevice>> ProbeAsync(
         IReadOnlyList<IHardwareDevice> existingDevices,
         CancellationToken cancellationToken)
     {
         var settings = options.Value;
         if (!settings.GpuRgb.Enabled)
         {
-            return Task.FromResult<IReadOnlyList<IHardwareDevice>>([]);
+            return [];
         }
 
         if (!busFactory.IsAvailable)
         {
             LogBackendUnavailable(busFactory.BackendName, busFactory.DiagnosticStatus);
-            return Task.FromResult<IReadOnlyList<IHardwareDevice>>([]);
+            return [];
         }
 
         var devices = new List<IHardwareDevice>();
         var buses = busFactory.OpenBuses();
-        for (var index = 0; index < buses.Count; index++)
+        var index = 0;
+        try
         {
-            var bus = buses[index];
-            var keepBus = false;
-            try
+            for (; index < buses.Count; index++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                keepBus = ProbeBus(bus, existingDevices, settings.DryRun, devices);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                LogBusProbeFailed(ex, bus.Location);
-            }
-            finally
-            {
-                if (!keepBus)
+                var bus = buses[index];
+                var keepBus = false;
+                try
                 {
-                    bus.Dispose();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    keepBus = ProbeBus(bus, existingDevices, settings.DryRun, devices);
                 }
-            }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    LogBusProbeFailed(ex, bus.Location);
+                }
+                finally
+                {
+                    if (!keepBus)
+                    {
+                        bus.Dispose();
+                    }
+                }
 
-            if (cancellationToken.IsCancellationRequested)
-            {
-                DisposeRemaining(buses, index + 1);
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
+        catch (OperationCanceledException)
+        {
+            // The caller never receives this scan's result, so nothing else would release what it opened.
+            DisposeRemaining(buses, index + 1);
+            await DisposeNewDevicesAsync(devices, existingDevices).ConfigureAwait(false);
+            throw;
+        }
 
-        return Task.FromResult<IReadOnlyList<IHardwareDevice>>(devices);
+        return devices;
+    }
+
+    /// <summary>Disposes devices opened by an interrupted scan; devices that were already managed stay untouched.</summary>
+    private static async ValueTask DisposeNewDevicesAsync(List<IHardwareDevice> devices, IReadOnlyList<IHardwareDevice> existingDevices)
+    {
+        foreach (var device in devices)
+        {
+            if (!ContainsInstance(existingDevices, device))
+            {
+                try
+                {
+                    await device.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Cleanup after cancellation is best effort; the cancellation itself must still surface.
+                }
+            }
+        }
     }
 
     /// <summary>Returns true when ownership of <paramref name="bus"/> moved to a newly opened device.</summary>
@@ -171,6 +197,19 @@ internal sealed partial class GpuRgbProbe(
             LogCandidateFailed(ex, candidate.Name, candidate.I2cAddress);
             return null;
         }
+    }
+
+    private static bool ContainsInstance(IReadOnlyList<IHardwareDevice> devices, IHardwareDevice device)
+    {
+        for (var i = 0; i < devices.Count; i++)
+        {
+            if (ReferenceEquals(devices[i], device))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static IHardwareDevice? FindExisting(IReadOnlyList<IHardwareDevice> existingDevices, string id)

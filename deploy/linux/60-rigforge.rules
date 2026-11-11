@@ -48,7 +48,9 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="26ce", ATTRS{idProduct}=="01a2", TAG+="uacce
 # QMK / Vial raw HID on interface 1 (usage page 0xFF60 is not a udev match).
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ENV{ID_USB_INTERFACE_NUM}=="01", TAG+="uaccess"
 
-# Chipset SMBus / i2c-dev adapters (DDR4/DDR5 RGB DRAM).
+# i2c-dev adapters: chipset SMBus (DDR4/DDR5 RGB DRAM) and the internal GPU I2C RGB adapter of NVIDIA cards
+# (ASUS Aura / MSI Mystic Light / Gigabyte RGB Fusion GPU). RigForge only opens the PCI-scoped internal port-1 adapter
+# and never monitor DDC buses; every transfer is limited to 0x60..0x77 by the GPU I2C address firewall.
 KERNEL=="i2c-[0-9]*", SUBSYSTEM=="i2c-dev", TAG+="uaccess"
 
 # Read-only SMBIOS/DMI so a non-root process can match DIMM identity before any SMBus traffic.
