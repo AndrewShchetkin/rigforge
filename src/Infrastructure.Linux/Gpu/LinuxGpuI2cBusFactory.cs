@@ -353,7 +353,7 @@ internal sealed partial class LinuxGpuI2cBus : IGpuI2cBus
     {
         GpuI2cAddressFirewall.ValidateSlaveAddress(slaveAddress);
         var length = registerAddress.Length + data.Length;
-        if (data.Length == 0 || length > MaxTransferBytes)
+        if (registerAddress.Length == 0 || data.Length == 0 || length > MaxTransferBytes)
         {
             return false;
         }
@@ -478,8 +478,21 @@ internal sealed partial class LinuxGpuI2cBus : IGpuI2cBus
     private unsafe bool Transfer(I2cMessage* messages, uint count)
     {
         var data = new I2cRdwrIoctlData { Messages = messages, MessageCount = count };
-        return IoctlRdwr(_handle, I2cRdwr, &data) >= 0;
+        return IsCompleteRdwrTransfer(IoctlRdwr(_handle, I2cRdwr, &data), count);
     }
+
+    /// <summary>
+    /// <c>I2C_RDWR</c> returns the number of messages transferred: equal to the request on full success, fewer on a partial
+    /// transfer, negative errno on error. Only a complete transfer counts as success.
+    /// </summary>
+    internal static bool IsCompleteRdwrTransfer(int ioctlResult, uint expectedMessageCount) =>
+        ioctlResult == (int)expectedMessageCount;
+
+    /// <summary>Managed size of <c>struct i2c_msg</c> (16 bytes on x64).</summary>
+    internal static unsafe int I2cMessageSize => sizeof(I2cMessage);
+
+    /// <summary>Managed size of <c>struct i2c_rdwr_ioctl_data</c> (16 bytes on x64).</summary>
+    internal static unsafe int I2cRdwrIoctlDataSize => sizeof(I2cRdwrIoctlData);
 
     /// <summary>True when an ioctl would run without the required device flock, or the bus is unusable.</summary>
     private bool TransferBlocked() =>

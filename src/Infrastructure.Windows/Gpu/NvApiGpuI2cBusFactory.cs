@@ -270,7 +270,7 @@ internal sealed unsafe class NvApiGpuI2cBus : IGpuI2cBus
         {
             return TryCreateLocalMutex();
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or WaitHandleCannotBeOpenedException)
         {
             return TryCreateLocalMutex();
         }

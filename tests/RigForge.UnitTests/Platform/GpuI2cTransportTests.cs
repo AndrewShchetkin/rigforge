@@ -198,6 +198,46 @@ public sealed class GpuI2cTransportTests : IDisposable
         AssertLockScopeIsReusableAndAllocationFree(bus);
     }
 
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void Linux_i2c_structs_match_the_x64_kernel_layout()
+    {
+        if (!Environment.Is64BitProcess)
+        {
+            return;
+        }
+
+        Assert.Equal(16, LinuxGpuI2cBus.I2cMessageSize);
+        Assert.Equal(16, LinuxGpuI2cBus.I2cRdwrIoctlDataSize);
+    }
+
+    [Theory]
+    [InlineData(2, 2u, true)]
+    [InlineData(1, 1u, true)]
+    [InlineData(1, 2u, false)]
+    [InlineData(0, 2u, false)]
+    [InlineData(-1, 1u, false)]
+    [InlineData(3, 2u, false)]
+    [SupportedOSPlatform("linux")]
+    public void Linux_rdwr_transfer_is_successful_only_when_every_message_completed(int ioctlResult, uint expected, bool success) =>
+        Assert.Equal(success, LinuxGpuI2cBus.IsCompleteRdwrTransfer(ioctlResult, expected));
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void Linux_bus_rejects_empty_register_address_after_the_firewall_check()
+    {
+        var path = Path.Combine(_root, "i2c-empty-reg");
+        Directory.CreateDirectory(_root);
+        File.WriteAllBytes(path, new byte[16]);
+        using SafeFileHandle handle = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        using var bus = LinuxGpuI2cBus.CreateForTests(handle, new GpuPciIdentity(0x10DE, 0x2C05, 0x1043, 0x89F4));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => bus.TryWriteRegisterBlock(0x50, [], [0x01]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => bus.TryReadRegisterBlock(0x50, [], new byte[1]));
+        Assert.False(bus.TryWriteRegisterBlock(0x67, [], [0x01]));
+        Assert.False(bus.TryReadRegisterBlock(0x67, [], new byte[1]));
+    }
+
     // ------------------------------------------------------------------ udev
 
     [Fact]
