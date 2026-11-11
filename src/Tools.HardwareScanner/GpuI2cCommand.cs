@@ -80,6 +80,8 @@ internal static class GpuI2cCommand
         }
 
         using var busLock = bus.AcquireBusLock();
+        var present = AsusAuraGpuProtocol.TryProbePresenceReadOnly(bus, address);
+        Console.WriteLine($"    ENE presence 0x{address:X2}: {(present ? "ACK (pure 1-byte read, no write)" : "no ACK on read-only probe")}");
         if (!AsusAuraGpuProtocol.TryReadControllerName(bus, address, out var controller))
         {
             Console.WriteLine($"    ASUS Aura 0x{address:X2}: no response (read-only name read failed)");

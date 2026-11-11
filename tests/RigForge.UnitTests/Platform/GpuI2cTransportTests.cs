@@ -159,6 +159,37 @@ public sealed class GpuI2cTransportTests : IDisposable
 
     [Fact]
     [SupportedOSPlatform("linux")]
+    public void Linux_bus_id_is_the_pci_address_alone_and_stable_when_i2c_numbering_shifts()
+    {
+        var pci = new GpuPciIdentity(0x10DE, 0x2C05, 0x1043, 0x89F4);
+        var beforeReboot = new LinuxGpuI2cAdapter("i2c-5", "NVIDIA i2c adapter 1 at 1:00.0", "0000:01:00.0", pci);
+        var afterReboot = new LinuxGpuI2cAdapter("i2c-9", "NVIDIA i2c adapter 1 at 1:00.0", "0000:01:00.0", pci);
+
+        Assert.Equal("pci-0000:01:00.0", LinuxGpuI2cBus.StableBusId(beforeReboot));
+        Assert.Equal(LinuxGpuI2cBus.StableBusId(beforeReboot), LinuxGpuI2cBus.StableBusId(afterReboot));
+        Assert.DoesNotContain("i2c-", LinuxGpuI2cBus.StableBusId(beforeReboot), StringComparison.Ordinal);
+        Assert.Contains("0000:01:00.0", LinuxGpuI2cBus.DescribeLocation(beforeReboot, "/dev/i2c-5"), StringComparison.Ordinal);
+        Assert.Contains("/dev/i2c-5", LinuxGpuI2cBus.DescribeLocation(beforeReboot, "/dev/i2c-5"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void Linux_factory_exposes_one_adapter_per_pci_gpu_even_if_several_internal_ports_are_present()
+    {
+        var sysfs = Path.Combine(_root, "sys");
+        var dev = Path.Combine(_root, "dev");
+        Directory.CreateDirectory(dev);
+        var gpu = AddPciDevice(sysfs, "0000_01_00.0", 0x10DE, 0x2C05, 0x1043, 0x89F4, 0x030000);
+        AddAdapter(gpu, "i2c-5", "NVIDIA i2c adapter 1 at 1:00.0");
+        AddAdapter(Path.Combine(gpu, "drm", "card0"), "i2c-6", "NVIDIA i2c adapter 1 at 1:00.0");
+
+        var adapters = new LinuxGpuI2cBusFactory(sysfs, dev).DiscoverAdapters();
+
+        Assert.Single(adapters);
+    }
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
     public void Linux_factory_without_sysfs_or_dev_nodes_is_unavailable_and_opens_nothing()
     {
         var sysfs = Path.Combine(_root, "sys");

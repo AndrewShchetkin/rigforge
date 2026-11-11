@@ -89,10 +89,29 @@ internal static class GigabyteFusionGpuProtocol
             && response[1] is 0x10 or 0x11 or 0x12 or 0x14;
     }
 
-    /// <summary>Blanks every Gen4 hardware zone (0..5) that is not mapped to a logical zone. Returns false on the first failed write.</summary>
+    /// <summary>
+    /// Pure read-only Gen4 presence check: one raw byte read, no write. Run before any 10-byte init packet so a card
+    /// whose controller lives at the Gen2 address never receives Gen4 packets.
+    /// </summary>
+    public static bool TryProbeGen4ReadOnly(IGpuI2cBus bus, byte slaveAddress)
+    {
+        Span<byte> probe = stackalloc byte[1];
+        return bus.TryReadRaw(slaveAddress, probe);
+    }
+
+    /// <summary>
+    /// Blanks every Gen4 hardware zone (0..5) that is not mapped to a logical zone, using the model's own 5-byte header.
+    /// Each write takes the bus lock on its own; the inter-write delay runs outside it so <c>Access_PCI</c> is never held
+    /// across a sleep. Returns false on the first failed write.
+    /// </summary>
     public static bool TryInitializeGen4(IGpuI2cBus bus, byte slaveAddress, GigabyteGpuLayout layout, IPrecisionTimer timer)
     {
-        Span<byte> packet = [0x12, 0x01, 0x01, 0x06, 0x0A, 0, 0, 0, 0, 0];
+        Span<byte> packet = stackalloc byte[Gen4PacketLength];
+        layout.Header.CopyTo(packet);
+        packet[5] = 0;
+        packet[6] = 0;
+        packet[7] = 0;
+        packet[8] = 0;
         var first = true;
         for (byte zone = 0; zone < HardwareZoneCount; zone++)
         {
@@ -108,7 +127,7 @@ internal static class GigabyteFusionGpuProtocol
 
             first = false;
             packet[9] = zone;
-            if (!bus.TryWriteRaw(slaveAddress, packet))
+            if (!WriteLocked(bus, slaveAddress, packet))
             {
                 return false;
             }
@@ -117,13 +136,38 @@ internal static class GigabyteFusionGpuProtocol
         return true;
     }
 
-    /// <summary>Static mode for Gen2 controllers.</summary>
-    public static bool TryInitializeGen2(IGpuI2cBus bus, byte slaveAddress)
+    /// <summary>
+    /// Static mode for Gen2 controllers: <c>[0x88, 0x01, 0x06, 0x63, 0x08, zone]</c> for every hardware zone in the layout.
+    /// Locking and delays follow <see cref="TryInitializeGen4"/>.
+    /// </summary>
+    public static bool TryInitializeGen2(IGpuI2cBus bus, byte slaveAddress, GigabyteGpuLayout layout, IPrecisionTimer timer)
     {
-        ReadOnlySpan<byte> staticMode = [0x88, 0x01, 0x06, 0x63, 0x08, 0x00];
-        return bus.TryWriteRaw(slaveAddress, staticMode);
+        Span<byte> staticMode = [0x88, 0x01, 0x06, 0x63, 0x08, 0x00];
+        for (var i = 0; i < layout.Zones.Length; i++)
+        {
+            if (i > 0)
+            {
+                timer.Sleep(InterWriteDelay);
+            }
+
+            staticMode[5] = layout.Zones[i].HardwareZone;
+            if (!WriteLocked(bus, slaveAddress, staticMode))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
+    /// <summary>One raw write under its own bus lock; the caller sleeps between writes with the lock released.</summary>
+    public static bool WriteLocked(IGpuI2cBus bus, byte slaveAddress, ReadOnlySpan<byte> payload)
+    {
+        using (bus.AcquireBusLock())
+        {
+            return bus.TryWriteRaw(slaveAddress, payload);
+        }
+    }
     public static bool TryWriteGen4Zone(IGpuI2cBus bus, byte slaveAddress, GigabyteGpuLayout layout, byte hardwareZone, RgbColor color)
     {
         Span<byte> packet = stackalloc byte[Gen4PacketLength];

@@ -38,6 +38,18 @@ internal static class AsusAuraGpuProtocol
         name.StartsWith("AUMA", StringComparison.OrdinalIgnoreCase)
         || name.StartsWith("AURA", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Pure read-only ENE presence check: a one-byte raw I2C read (or, when the transport refuses bare reads, a one-byte
+    /// register read of the data-port address). Neither sends a register pointer or any data write, so a missing or
+    /// non-ENE chip never sees a write when the address does not acknowledge.
+    /// </summary>
+    public static bool TryProbePresenceReadOnly(IGpuI2cBus bus, byte slaveAddress)
+    {
+        Span<byte> probe = stackalloc byte[1];
+        return bus.TryReadRaw(slaveAddress, probe)
+            || bus.TryReadRegisterBlock(slaveAddress, ReadPort, probe);
+    }
+
     public static bool TrySelectRegister(IGpuI2cBus bus, byte slaveAddress, ushort register)
     {
         Span<byte> pointer = [(byte)(register >> 8), (byte)register];
@@ -113,9 +125,13 @@ internal static class AsusAuraGpuProtocol
     {
         _ = TryWriteRegister(bus, slaveAddress, DirectAccess, 0x00);
 
+        // Speed 0x00 and mode 0x05 (rainbow, register 0x8021) through the speed/mode port staged at 0x8020.
         Span<byte> speedAndMode = [0x00, 0x05];
         _ = TrySelectRegister(bus, slaveAddress, DirectAccess);
         _ = bus.TryWriteRegisterBlock(slaveAddress, SpeedModePort, speedAndMode);
+
+        // Apply pulse so firmware families that latch the mode only on 0x80A0 also leave direct mode.
+        _ = TryWriteRegister(bus, slaveAddress, Apply, 0x01);
 
         _ = TryWriteRegister(bus, slaveAddress, DirectionRegister, 0x00);
         _ = TryWriteRegister(bus, slaveAddress, CommitRegister, 0x01);
@@ -136,17 +152,21 @@ internal static class AsusAuraGpuProtocol
         return ledCount * 3;
     }
 
-    /// <summary>Stages the color pointer and streams <paramref name="frame"/> in blocks of up to 31 payload bytes.</summary>
+    /// <summary>
+    /// Streams <paramref name="frame"/> in blocks of up to 31 payload bytes, staging the color pointer
+    /// <c>0x8100 + offset</c> before every block so firmware that does not auto-increment across separate block
+    /// transactions still receives LEDs 11..30 at the right place. A single-chunk frame (offset 0) is unchanged.
+    /// </summary>
     public static bool TryWriteFrame(IGpuI2cBus bus, byte slaveAddress, ReadOnlySpan<byte> frame, Span<byte> chunkPacket)
     {
-        if (!TrySelectRegister(bus, slaveAddress, ColorCtlV2))
-        {
-            return false;
-        }
-
         var offset = 0;
         while (offset < frame.Length)
         {
+            if (!TrySelectRegister(bus, slaveAddress, (ushort)(ColorCtlV2 + offset)))
+            {
+                return false;
+            }
+
             var chunkLength = Math.Min(frame.Length - offset, MaxChunkPayload);
             chunkPacket[0] = (byte)chunkLength;
             frame.Slice(offset, chunkLength).CopyTo(chunkPacket.Slice(1, chunkLength));

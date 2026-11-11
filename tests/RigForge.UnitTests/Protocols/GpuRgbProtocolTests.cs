@@ -428,7 +428,55 @@ public sealed class GpuRgbProtocolTests : IDisposable
         Assert.Equal([32, 32, 29], blocks.Select(b => b.Data.Length).ToArray());
         Assert.Equal([31, 31, 28], blocks.Select(b => (int)b.Data[0]).ToArray());
         Assert.Equal(90, blocks.Sum(b => b.Data[0]));
-        Assert.Equal(["W:00=8100"], bus.Calls.Take(1).Select(FakeGpuI2cBus.Describe).ToArray());
+
+        // The color pointer is staged before every chunk: 0x8100 + byte offset (0, 31, 62).
+        Assert.Equal(5 + 1, bus.Calls.Count);
+        Assert.Equal<ushort>([0x8100, 0x811F, 0x813E], bus.PointerTargets.Skip(bus.PointerTargets.Count - 3));
+        Assert.Equal(
+            ["W:00", "W:03", "W:00", "W:03", "W:00", "W:03"],
+            bus.Calls.Select(c => $"{c.Kind}:{Convert.ToHexString(c.Register)}").ToArray());
+    }
+
+    [Fact]
+    public void Asus_listed_card_with_a_non_aura_controller_name_is_rejected_without_mode_or_color_writes()
+    {
+        var entry = Entry(0x2C05, GpuPciIdentity.AsusSubVendorId, 0x89F4);
+        var bus = AsusBus(entry.PciId, "XXXX", 4);
+
+        var device = AsusAuraGpuDevice.TryOpen(bus, entry, dryRun: false);
+
+        Assert.Null(device);
+        Assert.Empty(bus.StateChangingWrites);
+        Assert.DoesNotContain(bus.Calls, c => c.Kind == "W" && !FakeGpuI2cBus.IsPointerSelect(c));
+        Assert.False(bus.Disposed);
+        Assert.False(bus.IsLockHeld);
+        Assert.Equal(1, bus.LockCount); // identity, signature and enable all run under a single bus lock
+    }
+
+    [Fact]
+    public void Asus_open_runs_identity_signature_and_direct_mode_under_one_bus_lock()
+    {
+        var entry = Entry(0x2C05, GpuPciIdentity.AsusSubVendorId, 0x89F4);
+        var bus = AsusBus(entry.PciId, "AUMA0-E6K5-1107", 4);
+
+        var opened = AsusAuraGpuDevice.TryOpen(bus, entry, dryRun: false);
+
+        Assert.NotNull(opened);
+        Assert.Equal(1, bus.LockCount);
+        Assert.False(bus.IsLockHeld);
+    }
+
+    [Fact]
+    public void Asus_read_only_presence_check_sends_nothing_when_no_controller_acknowledges()
+    {
+        var entry = Entry(0x2C05, GpuPciIdentity.AsusSubVendorId, 0x89F4);
+        var bus = AsusBus(entry.PciId, "AUMA0-E6K5-1107", 4);
+        bus.SilentAddresses.Add(0x67);
+
+        Assert.Null(AsusAuraGpuDevice.TryOpen(bus, entry, dryRun: false, requireReadOnlyPresence: true));
+        Assert.Empty(bus.StateChangingWrites);
+        Assert.All(bus.Calls, c => Assert.Equal("R", c.Kind)); // reads only: not even a register-pointer select
+        Assert.Equal(1, bus.RawReadCount);
     }
 
     [Fact]
@@ -502,7 +550,7 @@ public sealed class GpuRgbProtocolTests : IDisposable
         await device.DisposeAsync(); // idempotent
 
         Assert.Equal(
-            ["W:00=8020", "W:01=00", "W:00=8020", "W:02=0005", "W:00=8024", "W:01=00", "W:00=802F", "W:01=01"],
+            ["W:00=8020", "W:01=00", "W:00=8020", "W:02=0005", "W:00=80A0", "W:01=01", "W:00=8024", "W:01=00", "W:00=802F", "W:01=01"],
             bus.Calls.Select(FakeGpuI2cBus.Describe).ToArray());
         Assert.True(bus.Disposed);
         Assert.Equal(1, bus.DisposeCount);
@@ -707,7 +755,10 @@ public sealed class GpuRgbProtocolTests : IDisposable
         var bus = new FakeGpuI2cBus("NVAPI/GPU-0/I2C-1", entry.PciId);
         await using var device = GigabyteFusionGpuDevice.TryOpen(bus, entry, dryRun: false, new RecordingTimer())!;
         Assert.Equal(1, Assert.Single(device.Zones).LedCount);
-        Assert.Equal(5, bus.Calls.Count); // unmapped hardware zones 1..5
+        // Unmapped hardware zones 1..5 are blanked with the model's own 0x16 header, never the GAMING 0x12 one.
+        Assert.Equal(
+            Enumerable.Range(1, 5).Select(zone => "RAW:=1601000600" + "00000000" + zone.ToString("X2")).ToArray(),
+            bus.Calls.Select(FakeGpuI2cBus.Describe).ToArray());
         bus.Calls.Clear();
 
         await device.UpdateLedsAsync(new[] { new RgbColor(9, 8, 7) }, CancellationToken.None);
@@ -737,6 +788,7 @@ public sealed class GpuRgbProtocolTests : IDisposable
         var entry = Entry(0x2C05, GpuPciIdentity.GigabyteSubVendorId, 0x4181);
         var bus = new FakeGpuI2cBus("b", entry.PciId);
         bus.FailWriteAddresses.Add(0x75);
+        bus.SilentAddresses.Add(0x75);
 
         Assert.Null(GigabyteFusionGpuDevice.TryOpen(bus, entry, dryRun: false, new RecordingTimer()));
         Assert.False(bus.Disposed);
@@ -765,6 +817,81 @@ public sealed class GpuRgbProtocolTests : IDisposable
         bus.Calls.Clear();
         await device.UpdateLedsAsync(colors, CancellationToken.None);
         Assert.Empty(bus.Calls);
+        await device.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Gigabyte_gen2_gaming_initializes_static_mode_for_every_mapped_zone()
+    {
+        var gen2 = GpuPciCatalog.FindMatches(new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2F04, GpuPciIdentity.GigabyteSubVendorId, 0x4175))[1];
+        Assert.Equal("Gen2:GAMING_GEN2", gen2.Variant);
+        var bus = new FakeGpuI2cBus("NVAPI/GPU-0/I2C-1", gen2.PciId);
+        var timer = new RecordingTimer();
+
+        await using var device = GigabyteFusionGpuDevice.TryOpen(bus, gen2, dryRun: false, timer)!;
+
+        Assert.Equal(4, device.Zones.Count);
+        Assert.Equal(
+            ["RAW:=AB00000000000000", "RAW:=880106630800", "RAW:=880106630801", "RAW:=880106630802", "RAW:=880106630803"],
+            bus.Calls.Select(FakeGpuI2cBus.Describe).ToArray());
+        Assert.Equal(3, timer.Sleeps.Count);
+    }
+
+    [Fact]
+    public async Task Gigabyte_never_holds_the_bus_lock_while_the_timer_sleeps()
+    {
+        var observed = new List<bool>();
+        FakeGpuI2cBus? current = null;
+        var timer = new CallbackTimer(() => observed.Add(current!.IsLockHeld));
+
+        // Gen4 init (two blanked zones) and a four-zone Gen4 update.
+        var gen4 = Entry(0x2C05, GpuPciIdentity.GigabyteSubVendorId, 0x4181);
+        var gen4Bus = current = new FakeGpuI2cBus("g4", gen4.PciId);
+        var gen4Device = GigabyteFusionGpuDevice.TryOpen(gen4Bus, gen4, dryRun: false, timer)!;
+        var initSleeps = observed.Count;
+        Assert.True(initSleeps > 0);
+        await gen4Device.UpdateLedsAsync(Palette(4, 1), CancellationToken.None);
+        Assert.True(observed.Count > initSleeps);
+        Assert.Equal(0, gen4Bus.LockDepth);
+
+        // Gen2 init (four mapped zones) and update.
+        var gen2 = GpuPciCatalog.FindMatches(new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2F04, GpuPciIdentity.GigabyteSubVendorId, 0x4175))[1];
+        var gen2Bus = current = new FakeGpuI2cBus("g2", gen2.PciId);
+        var before = observed.Count;
+        var gen2Device = GigabyteFusionGpuDevice.TryOpen(gen2Bus, gen2, dryRun: false, timer)!;
+        await gen2Device.UpdateLedsAsync(Palette(4, 9), CancellationToken.None);
+        Assert.True(observed.Count > before);
+        Assert.Equal(0, gen2Bus.LockDepth);
+
+        Assert.All(observed, held => Assert.False(held));
+        await gen4Device.DisposeAsync();
+        await gen2Device.DisposeAsync();
+    }
+
+    [Fact]
+    public void Gigabyte_gen4_sends_no_init_packet_when_the_address_does_not_acknowledge_a_read()
+    {
+        var entry = Entry(0x2C05, GpuPciIdentity.GigabyteSubVendorId, 0x4181);
+        var bus = new FakeGpuI2cBus("b", entry.PciId);
+        bus.SilentAddresses.Add(0x75);
+
+        Assert.Null(GigabyteFusionGpuDevice.TryOpen(bus, entry, dryRun: false, new RecordingTimer()));
+        Assert.Empty(bus.Calls);
+        Assert.Equal(1, bus.RawReadCount);
+    }
+
+    [Fact]
+    public async Task Gigabyte_card_with_gen4_and_gen2_entries_skips_gen4_init_when_only_gen2_answers()
+    {
+        var pci = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2F04, GpuPciIdentity.GigabyteSubVendorId, 0x4175);
+        var bus = new FakeGpuI2cBus("NVAPI/GPU-0/I2C-1", pci);
+        bus.SilentAddresses.Add(0x75);
+
+        var devices = await NewProbe(new FakeGpuI2cBusFactory(bus)).ProbeAsync([], CancellationToken.None);
+
+        var device = Assert.Single(devices);
+        Assert.Equal("gigabyte-gpu-i2c:nvapi-gpu-0-i2c-1:71", device.Id);
+        Assert.DoesNotContain(bus.Calls, c => c.Slave == 0x75);
         await device.DisposeAsync();
     }
 
@@ -1030,6 +1157,7 @@ public sealed class GpuRgbProtocolTests : IDisposable
         var pci = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2F04, GpuPciIdentity.GigabyteSubVendorId, 0x4175);
         var bus = new FakeGpuI2cBus("NVAPI/GPU-0/I2C-1", pci);
         bus.FailWriteAddresses.Add(0x75); // Gen4 controller does not answer
+        bus.SilentAddresses.Add(0x75);
         var factory = new FakeGpuI2cBusFactory(bus);
 
         var devices = await NewProbe(factory).ProbeAsync([], CancellationToken.None);
@@ -1047,6 +1175,7 @@ public sealed class GpuRgbProtocolTests : IDisposable
         var pci = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2F04, GpuPciIdentity.GigabyteSubVendorId, 0x4175);
         var bus = new FakeGpuI2cBus("b", pci);
         bus.FailWriteAddresses.Add(0x75);
+        bus.SilentAddresses.Add(0x75);
         bus.FailWriteAddresses.Add(0x71);
 
         var devices = await NewProbe(new FakeGpuI2cBusFactory(bus)).ProbeAsync([], CancellationToken.None);
@@ -1066,6 +1195,88 @@ public sealed class GpuRgbProtocolTests : IDisposable
         var device = Assert.Single(devices);
         Assert.Empty(bus.StateChangingWrites);
         await device.DisposeAsync();
+        Assert.Empty(bus.StateChangingWrites);
+    }
+
+    [Fact]
+    public async Task Probe_enumeration_skips_managed_and_rejected_buses_without_reopening_them()
+    {
+        var listed = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0x89F4);
+        var unlisted = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0xFFFF);
+        var managedBus = AsusBus(listed, "AUMA0-E6K5-1107", 4, busId: "pci-0000:01:00.0");
+        var rejectedBus = AsusBus(unlisted, "XXXX", 8, busId: "pci-0000:02:00.0");
+        var factory = new FakeGpuI2cBusFactory(managedBus, rejectedBus) { SupportsEnumeration = true };
+        var probe = NewProbe(factory);
+
+        var first = await probe.ProbeAsync([], CancellationToken.None);
+
+        var managed = Assert.Single(first);
+        Assert.Equal(GpuDeviceIds.Create(GpuDeviceIds.AsusPrefix, "pci-0000:01:00.0", 0x67), managed.Id);
+        Assert.True(rejectedBus.Disposed);
+        Assert.Equal(["pci-0000:01:00.0", "pci-0000:02:00.0"], factory.OpenedBusIds);
+        Assert.Equal(0, factory.OpenCount);
+
+        // Hotplug rescan: the managed card and the rejected card must not be opened (or touched) again.
+        factory.OpenedBusIds.Clear();
+        var callsBefore = managedBus.Calls.Count;
+        var second = await probe.ProbeAsync(first, CancellationToken.None);
+
+        Assert.Same(managed, Assert.Single(second));
+        Assert.Empty(factory.OpenedBusIds);
+        Assert.Equal(callsBefore, managedBus.Calls.Count);
+        Assert.False(managedBus.Disposed);
+        await managed.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Probe_remembers_rejected_unlisted_asus_cards_across_rescans_without_enumeration()
+    {
+        var unlisted = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0xFFFF);
+        var first = AsusBus(unlisted, "XXXX", 8);
+        var factory = new FakeGpuI2cBusFactory(first);
+        var probe = NewProbe(factory);
+
+        Assert.Empty(await probe.ProbeAsync([], CancellationToken.None));
+        Assert.NotEmpty(first.Calls);
+
+        var second = AsusBus(unlisted, "AUMA0-NEW", 8); // same BusId and PCI id: remembered as rejected
+        factory.Buses.Clear();
+        factory.Buses.Add(second);
+
+        Assert.Empty(await probe.ProbeAsync([], CancellationToken.None));
+        Assert.True(second.Disposed);
+        Assert.Empty(second.Calls);
+        Assert.Equal(0, second.RawReadCount);
+    }
+
+    [Theory]
+    [InlineData("NVIDIA GeForce RTX 4080 Laptop GPU")]
+    [InlineData("NVIDIA GeForce RTX 3060 mobile")]
+    public async Task Probe_skips_the_unlisted_asus_fallback_on_laptop_and_mobile_gpus(string adapterName)
+    {
+        var unlisted = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0xFFFF);
+        var bus = AsusBus(unlisted, "AUMA0-NEW", 8, adapterName: adapterName);
+
+        var devices = await NewProbe(new FakeGpuI2cBusFactory(bus)).ProbeAsync([], CancellationToken.None);
+
+        Assert.Empty(devices);
+        Assert.True(bus.Disposed);
+        Assert.Empty(bus.Calls);
+        Assert.Equal(0, bus.RawReadCount);
+    }
+
+    [Fact]
+    public async Task Probe_unlisted_asus_card_without_a_responding_controller_gets_no_writes_at_all()
+    {
+        var unlisted = new GpuPciIdentity(GpuPciIdentity.NvidiaVendorId, 0x2C05, GpuPciIdentity.AsusSubVendorId, 0xFFFF);
+        var bus = AsusBus(unlisted, "AUMA0-NEW", 8);
+        bus.SilentAddresses.Add(0x67);
+
+        var devices = await NewProbe(new FakeGpuI2cBusFactory(bus)).ProbeAsync([], CancellationToken.None);
+
+        Assert.Empty(devices);
+        Assert.True(bus.Disposed);
+        Assert.All(bus.Calls, c => Assert.Equal("R", c.Kind)); // read-only presence probe, nothing written
         Assert.Empty(bus.StateChangingWrites);
     }
 
@@ -1129,6 +1340,11 @@ internal sealed class NoopTimer : IPrecisionTimer
     }
 }
 
+internal sealed class CallbackTimer(Action onSleep) : IPrecisionTimer
+{
+    public void Sleep(TimeSpan duration) => onSleep();
+}
+
 internal sealed class RecordingTimer : IPrecisionTimer
 {
     public List<TimeSpan> Sleeps { get; } = [];
@@ -1142,6 +1358,11 @@ internal sealed class FakeGpuI2cBusFactory(params FakeGpuI2cBus[] buses) : IGpuI
 
     public int OpenCount { get; private set; }
 
+    /// <summary>When true the factory exposes <see cref="EnumerateAdapters"/> / <see cref="TryOpenBus"/> like the real backends.</summary>
+    public bool SupportsEnumeration { get; set; }
+
+    public List<string> OpenedBusIds { get; } = [];
+
     public string BackendName => "Fake";
 
     public bool IsAvailable { get; set; } = true;
@@ -1153,12 +1374,23 @@ internal sealed class FakeGpuI2cBusFactory(params FakeGpuI2cBus[] buses) : IGpuI
         OpenCount++;
         return [.. Buses];
     }
+
+    public IReadOnlyList<GpuBusDescriptor> EnumerateAdapters() =>
+        SupportsEnumeration
+            ? [.. Buses.Select(static b => new GpuBusDescriptor(b.BusId, b.AdapterName, b.Location, b.PciId))]
+            : [];
+
+    public IGpuI2cBus? TryOpenBus(string busId)
+    {
+        OpenedBusIds.Add(busId);
+        return Buses.FirstOrDefault(b => b.BusId == busId);
+    }
 }
 
 /// <summary>In-memory GPU I2C bus modelling the ENE pointer / data / read ports of the ASUS Aura controller.</summary>
 internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string adapterName = "NVIDIA GeForce RTX") : IGpuI2cBus
 {
-    private static readonly NoopLock SharedLock = new();
+    private LockScope? _lockScope;
     private int _pointer;
 
     public sealed record Call(string Kind, byte Slave, byte[] Register, byte[] Data);
@@ -1171,7 +1403,17 @@ internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string a
 
     public List<ushort> PointerTargets { get; } = [];
 
+
     public bool FailReads { get; set; }
+
+    /// <summary>Addresses that never acknowledge a read (nothing, or a chip that does not answer, lives there).</summary>
+    public HashSet<byte> SilentAddresses { get; } = [];
+
+    public int RawReadCount { get; private set; }
+
+    public int LockDepth { get; private set; }
+
+    public bool IsLockHeld => LockDepth > 0;
 
     public byte[]? RawReadResponse { get; set; }
 
@@ -1208,7 +1450,8 @@ internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string a
     public IDisposable AcquireBusLock()
     {
         LockCount++;
-        return SharedLock;
+        LockDepth++;
+        return _lockScope ??= new LockScope(this);
     }
 
     public bool TryWriteRegisterBlock(byte slaveAddress, ReadOnlySpan<byte> registerAddress, ReadOnlySpan<byte> data)
@@ -1250,7 +1493,7 @@ internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string a
 
         OnRead?.Invoke();
 
-        if (FailReads || registerAddress.Length != 1 || registerAddress[0] != 0x81 || destination.Length != 1)
+        if (FailReads || SilentAddresses.Contains(slaveAddress) || registerAddress.Length != 1 || registerAddress[0] != 0x81 || destination.Length != 1)
         {
             return false;
         }
@@ -1272,26 +1515,33 @@ internal sealed class FakeGpuI2cBus(string busId, GpuPciIdentity pciId, string a
 
     public bool TryReadRaw(byte slaveAddress, Span<byte> destination)
     {
-        if (Record)
-        {
-            Calls.Add(new Call("RAWR", slaveAddress, [], []));
-        }
-
-        if (FailReads || RawReadResponse is null)
+        RawReadCount++;
+        if (FailReads || SilentAddresses.Contains(slaveAddress))
         {
             return false;
         }
 
-        RawReadResponse.AsSpan(0, Math.Min(RawReadResponse.Length, destination.Length)).CopyTo(destination);
+        if (RawReadResponse is not null)
+        {
+            RawReadResponse.AsSpan(0, Math.Min(RawReadResponse.Length, destination.Length)).CopyTo(destination);
+        }
+        else if (slaveAddress == 0x67)
+        {
+            destination.Clear();
+            destination[0] = AuraRegs[_pointer];
+        }
+        else
+        {
+            destination.Clear();
+        }
+
         return true;
     }
 
     public void Dispose() => DisposeCount++;
 
-    private sealed class NoopLock : IDisposable
+    private sealed class LockScope(FakeGpuI2cBus owner) : IDisposable
     {
-        public void Dispose()
-        {
-        }
+        public void Dispose() => owner.LockDepth--;
     }
 }

@@ -64,30 +64,36 @@ internal sealed class AsusAuraGpuDevice : IRgbDevice
     public IReadOnlyList<RgbZone> Zones => Volatile.Read(ref _zones);
 
     /// <summary>
-    /// Reads the controller identity and (unless <paramref name="dryRun"/>) enables volatile direct mode. Returns
-    /// <c>null</c> when the controller does not answer; the caller then keeps ownership of <paramref name="bus"/>.
+    /// Under one bus lock: (optionally) a pure read-only ENE presence check, the controller-name read, the mandatory
+    /// <c>AUMA</c>/<c>AURA</c> signature check (catalog-listed and unlisted cards alike), the LED count read and,
+    /// unless <paramref name="dryRun"/>, enabling volatile direct mode. Returns <c>null</c> when the controller does
+    /// not answer or is not an Aura GPU; no mode/color write has been sent in that case (register-pointer selects
+    /// only) and the caller keeps ownership of <paramref name="bus"/>.
     /// </summary>
-    public static AsusAuraGpuDevice? TryOpen(IGpuI2cBus bus, GpuCatalogEntry entry, bool dryRun)
+    public static AsusAuraGpuDevice? TryOpen(IGpuI2cBus bus, GpuCatalogEntry entry, bool dryRun, bool requireReadOnlyPresence = false)
     {
         ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(entry);
         var slaveAddress = entry.I2cAddress;
         GpuI2cAddressFirewall.ValidateSlaveAddress(slaveAddress);
 
-        if (!AsusAuraGpuProtocol.TryReadControllerName(bus, slaveAddress, out var controllerName))
+        using var busLock = bus.AcquireBusLock();
+        if (requireReadOnlyPresence && !AsusAuraGpuProtocol.TryProbePresenceReadOnly(bus, slaveAddress))
+        {
+            return null;
+        }
+
+        if (!AsusAuraGpuProtocol.TryReadControllerName(bus, slaveAddress, out var controllerName)
+            || !AsusAuraGpuProtocol.IsAuraGpuSignature(controllerName))
         {
             return null;
         }
 
         var ledCount = AsusAuraGpuProtocol.ReadLedCount(bus, slaveAddress, out _);
-        if (!dryRun)
+        if (!dryRun && !AsusAuraGpuProtocol.TryEnableDirectMode(bus, slaveAddress))
         {
-            using var busLock = bus.AcquireBusLock();
-            if (!AsusAuraGpuProtocol.TryEnableDirectMode(bus, slaveAddress))
-            {
-                _ = AsusAuraGpuProtocol.TryWriteRegister(bus, slaveAddress, AsusAuraGpuProtocol.DirectAccess, 0x00);
-                return null;
-            }
+            _ = AsusAuraGpuProtocol.TryWriteRegister(bus, slaveAddress, AsusAuraGpuProtocol.DirectAccess, 0x00);
+            return null;
         }
 
         return new AsusAuraGpuDevice(bus, entry, slaveAddress, controllerName, ledCount, dryRun, directModeEnabled: !dryRun);

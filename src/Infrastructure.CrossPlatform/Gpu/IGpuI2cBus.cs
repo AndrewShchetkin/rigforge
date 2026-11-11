@@ -37,6 +37,9 @@ public interface IGpuI2cBus : IDisposable
     bool TryReadRaw(byte slaveAddress, Span<byte> destination);
 }
 
+/// <summary>Identity of a GPU I2C adapter that can be listed without opening it or touching its registers.</summary>
+public readonly record struct GpuBusDescriptor(string BusId, string AdapterName, string Location, GpuPciIdentity PciId);
+
 public interface IGpuI2cBusFactory
 {
     string BackendName { get; }
@@ -46,6 +49,16 @@ public interface IGpuI2cBusFactory
     string DiagnosticStatus { get; }
 
     IReadOnlyList<IGpuI2cBus> OpenBuses();
+
+    /// <summary>
+    /// Lists the usable GPU adapters without opening them, so already-managed or previously rejected buses are never
+    /// reopened on a rescan. Factories that cannot enumerate return an empty list and callers fall back to
+    /// <see cref="OpenBuses"/>.
+    /// </summary>
+    IReadOnlyList<GpuBusDescriptor> EnumerateAdapters() => [];
+
+    /// <summary>Opens one adapter previously returned by <see cref="EnumerateAdapters"/>; <c>null</c> when it is gone or cannot be opened.</summary>
+    IGpuI2cBus? TryOpenBus(string busId) => null;
 }
 
 internal sealed class NullGpuI2cBusFactory : IGpuI2cBusFactory

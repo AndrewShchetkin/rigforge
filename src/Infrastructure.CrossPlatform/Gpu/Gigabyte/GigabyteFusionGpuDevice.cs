@@ -77,20 +77,32 @@ internal sealed class GigabyteFusionGpuDevice : IRgbDevice
         GpuI2cAddressFirewall.ValidateSlaveAddress(slaveAddress);
         var layout = GigabyteFusionGpuProtocol.ParseVariant(entry.Variant);
 
-        using (bus.AcquireBusLock())
+        // Presence probes take the bus lock briefly; the init writes lock per packet and sleep with the lock released.
+        if (layout.Generation == GigabyteGpuGeneration.Gen2)
         {
-            if (layout.Generation == GigabyteGpuGeneration.Gen2)
+            bool present;
+            using (bus.AcquireBusLock())
             {
-                var present = dryRun
+                present = dryRun
                     ? GigabyteFusionGpuProtocol.TryProbeGen2ReadOnly(bus, slaveAddress)
-                    : GigabyteFusionGpuProtocol.TryProbeGen2(bus, slaveAddress)
-                        && GigabyteFusionGpuProtocol.TryInitializeGen2(bus, slaveAddress);
-                if (!present)
-                {
-                    return null;
-                }
+                    : GigabyteFusionGpuProtocol.TryProbeGen2(bus, slaveAddress);
             }
-            else if (!dryRun && !GigabyteFusionGpuProtocol.TryInitializeGen4(bus, slaveAddress, layout, timer))
+
+            if (!present || (!dryRun && !GigabyteFusionGpuProtocol.TryInitializeGen2(bus, slaveAddress, layout, timer)))
+            {
+                return null;
+            }
+        }
+        else
+        {
+            // Read-only first: 10-byte init packets are only sent to an address that actually acknowledges a read.
+            bool present;
+            using (bus.AcquireBusLock())
+            {
+                present = GigabyteFusionGpuProtocol.TryProbeGen4ReadOnly(bus, slaveAddress);
+            }
+
+            if (!present || (!dryRun && !GigabyteFusionGpuProtocol.TryInitializeGen4(bus, slaveAddress, layout, timer)))
             {
                 return null;
             }
@@ -118,39 +130,36 @@ internal sealed class GigabyteFusionGpuDevice : IRgbDevice
 
             var span = colors.Span;
             var zones = _layout.Zones;
-            IDisposable? busLock = null;
-            try
+            var wroteAny = false;
+            for (var i = 0; i < zones.Length; i++)
             {
-                var wroteAny = false;
-                for (var i = 0; i < zones.Length; i++)
+                var color = i < span.Length ? span[i] : default;
+                if (_zoneCache[i] == color)
                 {
-                    var color = i < span.Length ? span[i] : default;
-                    if (_zoneCache[i] == color)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    busLock ??= _bus.AcquireBusLock();
-                    if (wroteAny)
-                    {
-                        _timer.Sleep(GigabyteFusionGpuProtocol.InterWriteDelay);
-                    }
+                // The inter-write delay runs outside the bus lock: Access_PCI is never held across a sleep.
+                if (wroteAny)
+                {
+                    _timer.Sleep(GigabyteFusionGpuProtocol.InterWriteDelay);
+                }
 
-                    var written = _layout.Generation == GigabyteGpuGeneration.Gen2
+                bool written;
+                using (_bus.AcquireBusLock())
+                {
+                    written = _layout.Generation == GigabyteGpuGeneration.Gen2
                         ? GigabyteFusionGpuProtocol.TryWriteGen2Zone(_bus, _slaveAddress, zones[i].HardwareZone, color)
                         : GigabyteFusionGpuProtocol.TryWriteGen4Zone(_bus, _slaveAddress, _layout, zones[i].HardwareZone, color);
-                    if (!written)
-                    {
-                        throw new IOException($"Gigabyte GPU at 0x{_slaveAddress:X2} did not acknowledge zone {zones[i].Name}.");
-                    }
-
-                    _zoneCache[i] = color;
-                    wroteAny = true;
                 }
-            }
-            finally
-            {
-                busLock?.Dispose();
+
+                if (!written)
+                {
+                    throw new IOException($"Gigabyte GPU at 0x{_slaveAddress:X2} did not acknowledge zone {zones[i].Name}.");
+                }
+
+                _zoneCache[i] = color;
+                wroteAny = true;
             }
         }
 

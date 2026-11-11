@@ -32,8 +32,41 @@ internal sealed class NvApiGpuI2cBusFactory : IGpuI2cBusFactory
             return [];
         }
 
+        var entries = Describe(library);
+        var buses = new List<IGpuI2cBus>(entries.Count);
+        foreach (var (descriptor, handle) in entries)
+        {
+            buses.Add(new NvApiGpuI2cBus(library, handle, descriptor.BusId, descriptor.AdapterName, descriptor.Location, descriptor.PciId));
+        }
+
+        return buses;
+    }
+
+    public IReadOnlyList<GpuBusDescriptor> EnumerateAdapters() =>
+        NvApiLibrary.TryGet(out _) is { } library ? [.. Describe(library).Select(static e => e.Descriptor)] : [];
+
+    public IGpuI2cBus? TryOpenBus(string busId)
+    {
+        if (NvApiLibrary.TryGet(out _) is not { } library)
+        {
+            return null;
+        }
+
+        foreach (var (descriptor, handle) in Describe(library))
+        {
+            if (string.Equals(descriptor.BusId, busId, StringComparison.Ordinal))
+            {
+                return new NvApiGpuI2cBus(library, handle, descriptor.BusId, descriptor.AdapterName, descriptor.Location, descriptor.PciId);
+            }
+        }
+
+        return null;
+    }
+
+    private static List<(GpuBusDescriptor Descriptor, nint Handle)> Describe(NvApiLibrary library)
+    {
         var handles = library.EnumeratePhysicalGpus();
-        var buses = new List<IGpuI2cBus>(handles.Count);
+        var entries = new List<(GpuBusDescriptor, nint)>(handles.Count);
         for (var index = 0; index < handles.Count; index++)
         {
             var handle = handles[index];
@@ -59,10 +92,10 @@ internal sealed class NvApiGpuI2cBusFactory : IGpuI2cBusFactory
                 location = string.Create(CultureInfo.InvariantCulture, $"NVAPI GPU {index} (port 1)");
             }
 
-            buses.Add(new NvApiGpuI2cBus(library, handle, busId, adapterName, location, pci));
+            entries.Add((new GpuBusDescriptor(busId, adapterName, location, pci), handle));
         }
 
-        return buses;
+        return entries;
     }
 }
 

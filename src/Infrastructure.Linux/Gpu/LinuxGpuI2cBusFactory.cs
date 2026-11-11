@@ -78,6 +78,41 @@ internal sealed partial class LinuxGpuI2cBusFactory : IGpuI2cBusFactory
         return buses;
     }
 
+    public IReadOnlyList<GpuBusDescriptor> EnumerateAdapters()
+    {
+        var result = new List<GpuBusDescriptor>();
+        foreach (var adapter in DiscoverAdapters())
+        {
+            var devicePath = DevicePath(adapter);
+            if (CanReadWrite(devicePath))
+            {
+                result.Add(new GpuBusDescriptor(
+                    LinuxGpuI2cBus.StableBusId(adapter),
+                    adapter.AdapterName,
+                    LinuxGpuI2cBus.DescribeLocation(adapter, devicePath),
+                    adapter.PciId));
+            }
+        }
+
+        return result;
+    }
+
+    public IGpuI2cBus? TryOpenBus(string busId)
+    {
+        foreach (var adapter in DiscoverAdapters())
+        {
+            if (!string.Equals(LinuxGpuI2cBus.StableBusId(adapter), busId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var devicePath = DevicePath(adapter);
+            return CanReadWrite(devicePath) ? LinuxGpuI2cBus.TryOpen(adapter, devicePath) : null;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// True only for the NVIDIA driver's internal RGB adapter (<c>NVIDIA i2c adapter 1 at B:D.F</c>). Ports 0, 2, 3, ... are
     /// monitor DDC buses and are never accepted; anything that does not name its port is rejected as well.
@@ -139,6 +174,7 @@ internal sealed partial class LinuxGpuI2cBusFactory : IGpuI2cBusFactory
         }
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seenPci = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pciDir in SafeEnumerateDirectories(pciRoot, "*"))
         {
             if (!TryReadNvidiaDisplayController(pciDir, out var pciId))
@@ -153,7 +189,12 @@ internal sealed partial class LinuxGpuI2cBusFactory : IGpuI2cBusFactory
                 if (!seen.Contains(busName) && TryReadName(adapterDir) is { } name && IsInternalNvidiaI2cAdapter(name))
                 {
                     seen.Add(busName);
-                    result.Add(new LinuxGpuI2cAdapter(busName, name, pciAddress, pciId));
+
+                    // The BusId is the PCI address alone, so a GPU contributes at most one internal port-1 adapter.
+                    if (seenPci.Add(pciAddress))
+                    {
+                        result.Add(new LinuxGpuI2cAdapter(busName, name, pciAddress, pciId));
+                    }
                 }
             }
         }
@@ -285,6 +326,8 @@ internal sealed partial class LinuxGpuI2cBus : IGpuI2cBus
     private const int LockExclusive = 2;
     private const int LockUnlock = 8;
     private const int Eintr = 4;
+    private const int OpenReadWrite = 2;
+    private const int OpenCloseOnExec = 0x80000;
 
     private readonly SafeFileHandle _handle;
     private readonly object _sync = new();
@@ -313,16 +356,29 @@ internal sealed partial class LinuxGpuI2cBus : IGpuI2cBus
 
     public GpuPciIdentity PciId { get; }
 
+    /// <summary>
+    /// Stable across reboots: <c>i2c-N</c> numbering can shift between boots while a PCI GPU has exactly one internal
+    /// port-1 adapter, so the PCI address alone identifies the bus. The <c>i2c-N</c> name stays in <c>Location</c>.
+    /// </summary>
+    internal static string StableBusId(LinuxGpuI2cAdapter adapter) => $"pci-{adapter.PciAddress}";
+
+    internal static string DescribeLocation(LinuxGpuI2cAdapter adapter, string devicePath) =>
+        $"{devicePath} ({adapter.AdapterName}, PCI {adapter.PciAddress})";
+
     internal static LinuxGpuI2cBus? TryOpen(LinuxGpuI2cAdapter adapter, string devicePath)
     {
         try
         {
-            var handle = File.OpenHandle(devicePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            if (OpenDevice(devicePath) is not { } handle)
+            {
+                return null;
+            }
+
             return new LinuxGpuI2cBus(
                 handle,
-                $"pci-{adapter.PciAddress}-{adapter.BusName}",
+                StableBusId(adapter),
                 adapter.AdapterName,
-                $"{devicePath} ({adapter.AdapterName}, PCI {adapter.PciAddress})",
+                DescribeLocation(adapter, devicePath),
                 adapter.PciId,
                 useCrossProcessLock: true);
         }
@@ -330,6 +386,28 @@ internal sealed partial class LinuxGpuI2cBus : IGpuI2cBus
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Raw <c>open(path, O_RDWR | O_CLOEXEC)</c>. <c>File.OpenHandle</c> would take an implicit <c>flock</c> on the
+    /// descriptor, which fails while another descriptor in this process holds <c>LOCK_EX</c> on the same adapter
+    /// (a hotplug rescan reopening an already-managed bus).
+    /// </summary>
+    private static SafeFileHandle? OpenDevice(string path)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return null;
+        }
+
+        int fd;
+        do
+        {
+            fd = Open(path, OpenReadWrite | OpenCloseOnExec);
+        }
+        while (fd < 0 && Marshal.GetLastPInvokeError() == Eintr);
+
+        return fd < 0 ? null : new SafeFileHandle(fd, ownsHandle: true);
     }
 
     /// <summary>Wraps an existing handle so firewall and lock behavior can be tested without <c>/dev/i2c-*</c>.</summary>
@@ -648,4 +726,7 @@ internal sealed partial class LinuxGpuI2cBus : IGpuI2cBus
 
     [LibraryImport("libc", EntryPoint = "flock", SetLastError = true)]
     private static partial int Flock(int fd, int operation);
+
+    [LibraryImport("libc", EntryPoint = "open", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int Open(string pathname, int flags);
 }
