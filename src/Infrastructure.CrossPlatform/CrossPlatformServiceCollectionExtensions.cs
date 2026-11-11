@@ -6,6 +6,7 @@ using RigForge.Core.Interfaces;
 using RigForge.Infrastructure.CrossPlatform.Audio;
 using RigForge.Infrastructure.CrossPlatform.Asus;
 using RigForge.Infrastructure.CrossPlatform.Effects;
+using RigForge.Infrastructure.CrossPlatform.Gpu;
 using RigForge.Infrastructure.CrossPlatform.Kingston;
 using RigForge.Infrastructure.CrossPlatform.Manifests;
 using RigForge.Infrastructure.CrossPlatform.Nvidia;
@@ -30,6 +31,7 @@ public static class CrossPlatformServiceCollectionExtensions
 
         services.TryAddSingleton<IUsbBulkTransportFactory, LibUsbBulkTransportFactory>();
         services.TryAddSingleton<ISmbusControllerFactory, NullSmbusControllerFactory>();
+        services.TryAddSingleton<IGpuI2cBusFactory, NullGpuI2cBusFactory>();
         services.TryAddSingleton<IPrecisionTimer, SleepPrecisionTimer>();
         services.TryAddSingleton<IScreenCapturer, NullScreenCapturer>();
         services.TryAddSingleton<IAudioLevelProvider, NullAudioLevelProvider>();
@@ -41,6 +43,7 @@ public static class CrossPlatformServiceCollectionExtensions
         services.AddSingleton<IDeviceProbe, AsusAuraProbe>();
         services.AddSingleton<IDeviceProbe, KingstonFuryProbe>();
         services.AddSingleton<IDeviceProbe, NvmlProbe>();
+        services.AddSingleton<IDeviceProbe, GpuRgbProbe>();
         services.AddMainboardAndHubProbes();
         services.AddPeripheralsDramAndDiscoveryProbes(configuration);
 

@@ -27,8 +27,9 @@ public static class GpuPciCatalog
     ];
 
     private static readonly GpuCatalogEntry[] Entries = BuildEntries();
+    private static readonly IReadOnlyList<GpuCatalogEntry> ReadOnlyEntries = Array.AsReadOnly(Entries);
 
-    public static IReadOnlyList<GpuCatalogEntry> All => Entries;
+    public static IReadOnlyList<GpuCatalogEntry> All => ReadOnlyEntries;
 
     /// <summary>
     /// All candidate controllers for a card, best candidate first. Valid custom manifests (JSON overrides) replace
@@ -118,7 +119,7 @@ public static class GpuPciCatalog
         }
 
         // Blackwell (RTX 50)
-        Asus(0x2D04, "ASUS GeForce RTX 5060 Ti TUF Gaming", 0x89F0, 0x89F1, 0x89F2, 0x89F3);
+        Asus(0x2D04, "ASUS GeForce RTX 5060 Ti TUF Gaming", 0x89F0, 0x89F1, 0x89F2, 0x89F3, 0x8A08);
         Asus(0x2F04, "ASUS GeForce RTX 5070 TUF GAMING", 0x89F2);
         Asus(0x2F04, "ASUS GeForce RTX 5070 ROG Strix OC", 0x8A18);
         Asus(0x2C05, "ASUS GeForce RTX 5070 Ti TUF GAMING", 0x89F4, 0x8A0C);
@@ -163,15 +164,14 @@ public static class GpuPciCatalog
         Msi(0x2D04, "5060 Ti", vanguard, 0x5354);
         Msi(0x2F04, "5070", trio, 0x5321);
         Msi(0x2F04, "5070", vanguard, 0x5322);
-        Msi(0x2C05, "5070 Ti", suprim, 0x5314);
+        Msi(0x2C05, "5070 Ti", vanguard, 0x5314, 0x5318);
         Msi(0x2C05, "5070 Ti", trio, 0x5315);
-        Msi(0x2C05, "5070 Ti", vanguard, 0x5318);
         Msi(0x2C02, "5080", suprim, 0x5313);
-        Msi(0x2C02, "5080", trio, 0x5314);
-        Msi(0x2C02, "5080", vanguard, 0x5315);
+        Msi(0x2C02, "5080", vanguard, 0x5314);
+        Msi(0x2C02, "5080", trio, 0x5315);
         Msi(0x2B85, "5090", suprim, 0x5301);
-        Msi(0x2B85, "5090", trio, 0x5302);
-        Msi(0x2B85, "5090", vanguard, 0x5303);
+        Msi(0x2B85, "5090", vanguard, 0x5302);
+        Msi(0x2B85, "5090", trio, 0x5303);
 
         const string lovelaceTrio = "Lovelace:GAMING TRIO";
         const string lovelaceSuprim = "Lovelace:SUPRIM";
