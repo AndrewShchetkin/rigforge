@@ -52,7 +52,11 @@ public sealed class JsonDeviceManifestCatalog : IDeviceManifestCatalog
         _byUsb = new Dictionary<(int VendorId, int ProductId), DeviceManifest>(manifests.Count);
         foreach (var manifest in manifests)
         {
-            _byUsb[(manifest.VendorId, manifest.ProductId)] = manifest;
+            // PCI manifests (GPU subsystem IDs) share the (VendorId, ProductId) key space with USB; keep them out of the USB index.
+            if (manifest.SubVendorId is null)
+            {
+                _byUsb[(manifest.VendorId, manifest.ProductId)] = manifest;
+            }
         }
     }
 
@@ -359,7 +363,11 @@ public sealed class JsonDeviceManifestCatalog : IDeviceManifestCatalog
 
     private static void Upsert(List<DeviceManifest> manifests, DeviceManifest manifest)
     {
-        var index = manifests.FindIndex(m => m.VendorId == manifest.VendorId && m.ProductId == manifest.ProductId);
+        var index = manifests.FindIndex(m =>
+            m.VendorId == manifest.VendorId
+            && m.ProductId == manifest.ProductId
+            && m.SubVendorId == manifest.SubVendorId
+            && m.SubDeviceId == manifest.SubDeviceId);
         if (index >= 0)
         {
             manifests[index] = manifest;

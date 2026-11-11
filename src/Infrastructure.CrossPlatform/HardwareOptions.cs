@@ -17,6 +17,13 @@ public sealed class HardwareOptions
     public NvidiaOptions Nvidia { get; set; } = new();
 
     public KingstonFuryOptions KingstonFury { get; set; } = new();
+
+    public GpuRgbOptions GpuRgb { get; set; } = new();
+}
+
+public sealed class GpuRgbOptions
+{
+    public bool Enabled { get; set; } = true;
 }
 
 public sealed class NzxtOptions

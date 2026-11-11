@@ -22,6 +22,8 @@ public enum DeviceProtocolFamily
     OpenRgbBridge,
     DetectedUnmanaged,
     NzxtKrakenX3,
+    MsiMysticGpuI2c,
+    GigabyteFusionGpuI2c,
 }
 
 public sealed record DeviceDisplayManifest(
@@ -42,4 +44,8 @@ public sealed record DeviceManifest(
     int LedChannels = 0,
     byte[]? PumpHeader = null,
     byte[]? FanHeader = null,
-    DeviceDisplayManifest? Display = null);
+    DeviceDisplayManifest? Display = null,
+    int? SubVendorId = null,
+    int? SubDeviceId = null,
+    byte? I2cAddress = null,
+    string? Variant = null);
