@@ -33,6 +33,10 @@ export interface DaemonInfoDto {
   privateBytes: number;
   workingSetBytes: number;
   managedHeapBytes: number;
+  product?: string;
+  sessionId?: number;
+  autostartSupported?: boolean;
+  autostartEnabled?: boolean;
 }
 
 /** What the lighting loop is doing. `Sleeping` and `Blackout` wait without burning CPU. */
@@ -313,6 +317,7 @@ export interface DaemonHubMethods {
   ImportProfile(profile: RigProfile): Promise<SystemStateDto>;
   UpsertDisplay(deviceId: string, lcd: LcdSettings): Promise<SystemStateDto>;
   RemoveDisplay(deviceId: string): Promise<SystemStateDto>;
+  SetAutostart(enabled: boolean): Promise<SystemStateDto>;
 }
 
 /** Server -> client events (connection.on). */

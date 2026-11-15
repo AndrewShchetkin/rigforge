@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# Removes the RigForge user daemon, udev rules, and i2c autoload entry.
-# Profile data in ~/.config/rigforge is left in place.
+# Removes the RigForge user daemon, udev rules, desktop launcher, and icon.
+# Profile data in ~/.config/rigforge is kept unless --purge is passed.
 set -euo pipefail
 
 PREFIX="${HOME}/.local/share/rigforge"
 UNIT_PATH="${HOME}/.config/systemd/user/rigforge.service"
+PURGE=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --purge) PURGE=1 ;;
+    *)
+      echo "Unknown argument: ${arg}" >&2
+      exit 2
+      ;;
+  esac
+done
 
 as_root() {
   if [[ "$(id -u)" -eq 0 ]]; then
@@ -31,5 +42,13 @@ if [[ -d "${PREFIX}" ]]; then
   rm -rf "${PREFIX}"
 fi
 
-echo "RigForge user service and program files were removed."
-echo "Saved profiles in ~/.config/rigforge were kept."
+rm -f "${HOME}/.local/share/applications/rigforge.desktop"
+rm -f "${HOME}/.local/share/icons/hicolor/scalable/apps/rigforge.svg"
+
+echo "RigForge user service, program files, desktop entry, and icon were removed."
+if [[ "${PURGE}" == "1" ]]; then
+  rm -rf "${HOME}/.config/rigforge"
+  echo "Saved profiles in ~/.config/rigforge were removed."
+else
+  echo "Saved profiles in ~/.config/rigforge were kept."
+fi

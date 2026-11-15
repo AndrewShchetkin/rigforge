@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RigForge
+GenericName=Hardware control
+Comment=RGB, fan curves, and AIO screen control
+Exec=rigforge-open
+Icon=rigforge
+Terminal=false
+Categories=System;Settings;HardwareSettings;
+StartupNotify=true

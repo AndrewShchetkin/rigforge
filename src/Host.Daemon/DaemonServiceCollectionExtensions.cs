@@ -1,7 +1,10 @@
+using System.Runtime.Versioning;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RigForge.Application;
+using RigForge.Host.Daemon.Hosting;
+using RigForge.Host.Daemon.Services;
 using RigForge.Infrastructure.CrossPlatform;
 using RigForge.Infrastructure.Linux;
 using RigForge.Infrastructure.Windows;
@@ -27,12 +30,19 @@ public static class DaemonServiceCollectionExtensions
         if (OperatingSystem.IsWindows())
         {
             services.AddRigForgeWindowsPlatform(configuration);
+            AddWindowsAutostart(services);
         }
         else if (OperatingSystem.IsLinux())
         {
             services.AddRigForgeLinuxPlatform(configuration);
+            services.AddSingleton<IAutostartService, LinuxAutostartService>();
+        }
+        else
+        {
+            services.AddSingleton<IAutostartService, NullAutostartService>();
         }
 
+        services.AddSingleton<SystemStateBuilder>();
         return services;
     }
 
@@ -49,4 +59,8 @@ public static class DaemonServiceCollectionExtensions
             ValidateScopes = true,
         });
     }
+
+    [SupportedOSPlatform("windows")]
+    private static void AddWindowsAutostart(IServiceCollection services) =>
+        services.AddSingleton<IAutostartService, WindowsAutostartService>();
 }

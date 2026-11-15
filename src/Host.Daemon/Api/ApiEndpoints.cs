@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Mvc;
 using RigForge.Application.Devices;
 using RigForge.Application.Diagnostics;
@@ -6,6 +7,7 @@ using RigForge.Application.Profiles;
 using RigForge.Application.Telemetry;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
+using RigForge.Host.Daemon.Hosting;
 using RigForge.Host.Daemon.Services;
 
 namespace RigForge.Host.Daemon.Api;
@@ -23,6 +25,32 @@ public static class ApiEndpoints
         api.MapGet("/health", (SystemStateBuilder state) => state.BuildInfo())
             .WithName("GetHealth")
             .WithSummary("Daemon version, uptime and memory usage.");
+
+        api.MapGet("/host/autostart", (IAutostartService autostart) => ToAutostartDto(autostart.GetStatus()))
+            .WithName("GetAutostart")
+            .WithSummary("Whether sign-in autostart is supported and currently enabled.");
+
+        api.MapPut("/host/autostart", async (AutostartUpdateRequest request, IAutostartService autostart, CancellationToken ct) =>
+            {
+                try
+                {
+                    var status = await autostart.SetEnabledAsync(request.Enabled, ct);
+                    return Results.Ok(ToAutostartDto(status));
+                }
+                catch (InvalidOperationException exception)
+                {
+                    return Results.Problem(
+                        detail: exception.Message,
+                        statusCode: StatusCodes.Status409Conflict,
+                        title: "Autostart could not be changed.");
+                }
+            })
+            .WithName("SetAutostart")
+            .WithSummary("Enables or disables sign-in autostart without stopping the daemon.");
+
+        api.MapPost("/host/shutdown", RequestShutdown)
+            .WithName("ShutdownHost")
+            .WithSummary("Stops the daemon after a short delay so fan curves and the AIO screen can be restored.");
 
         api.MapGet("/state", (SystemStateBuilder state) => state.Build())
             .WithName("GetState")
@@ -120,6 +148,42 @@ public static class ApiEndpoints
 
         return app;
     }
+
+    /// <summary>
+    /// Installer shutdown. Browser requests are rejected: a page that can reach loopback must not be able to
+    /// stop fan control. The response returns before <see cref="IHostApplicationLifetime.StopApplication"/>
+    /// so the cooling loop can hand curves back to firmware.
+    /// </summary>
+    public static IResult RequestShutdown(HttpContext httpContext, IHostApplicationLifetime lifetime)
+    {
+        if (IsShutdownForbidden(httpContext))
+        {
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(75);
+            lifetime.StopApplication();
+        });
+
+        return Results.Accepted(value: new { stopping = true });
+    }
+
+    private static bool IsShutdownForbidden(HttpContext httpContext)
+    {
+        if (httpContext.Request.Headers.ContainsKey("Origin")
+            || httpContext.Request.Headers.ContainsKey("Referer")
+            || httpContext.Request.Headers.ContainsKey("Sec-Fetch-Site"))
+        {
+            return true;
+        }
+
+        return httpContext.Connection.RemoteIpAddress is { } address && !IPAddress.IsLoopback(address);
+    }
+
+    private static AutostartStatusDto ToAutostartDto(AutostartStatus status) =>
+        new(status.Supported, status.Enabled, status.TaskRegistered, status.Details);
 
     private static async Task<IResult> ToResult(Task<ProfileUpdateResult> update)
     {

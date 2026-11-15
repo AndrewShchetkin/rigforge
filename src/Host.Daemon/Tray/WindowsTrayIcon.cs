@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
+using RigForge.Host.Daemon.Hosting;
+
 namespace RigForge.Host.Daemon.Tray;
 
 /// <summary>
@@ -33,6 +35,9 @@ internal sealed partial class WindowsTrayIcon : IDisposable
     private const uint LrLoadFromFile = 0x00000010;
     private const uint LrDefaultSize = 0x00000040;
     private const uint MfString = 0x00000000;
+    private const uint MfGrayed = 0x00000001;
+    private const uint MfChecked = 0x00000008;
+    private const uint MfSeparator = 0x00000800;
     private const uint TpmRightButton = 0x0002;
     private const uint TpmReturnCmd = 0x0100;
     private const int WsPopup = unchecked((int)0x80000000);
@@ -41,6 +46,7 @@ internal sealed partial class WindowsTrayIcon : IDisposable
     private const int ErrorClassAlreadyExists = 1410;
     private const uint CommandOpen = 1;
     private const uint CommandExit = 2;
+    private const uint CommandAutostart = 3;
     private const string WindowClassName = "RigForge.Tray";
 
     private static readonly Native.WndProc WndProcDelegate = WndProc;
@@ -48,6 +54,7 @@ internal sealed partial class WindowsTrayIcon : IDisposable
 
     private readonly Func<DashboardLaunch> _openDashboard;
     private readonly Action _exit;
+    private readonly IAutostartService _autostart;
     private readonly ILogger _logger;
     private readonly Lock _gate = new();
     private Thread? _thread;
@@ -59,10 +66,11 @@ internal sealed partial class WindowsTrayIcon : IDisposable
     private bool _disposed;
     private long _lastOpenTick;
 
-    public WindowsTrayIcon(Func<DashboardLaunch> openDashboard, Action exit, ILogger<WindowsTrayIcon> logger)
+    public WindowsTrayIcon(Func<DashboardLaunch> openDashboard, Action exit, IAutostartService autostart, ILogger<WindowsTrayIcon> logger)
     {
         _openDashboard = openDashboard;
         _exit = exit;
+        _autostart = autostart;
         _logger = logger;
     }
 
@@ -288,6 +296,8 @@ internal sealed partial class WindowsTrayIcon : IDisposable
         try
         {
             Native.AppendMenu(menu, MfString, CommandOpen, "Open dashboard");
+            Native.AppendMenu(menu, AutostartFlags(), CommandAutostart, "Start with Windows");
+            Native.AppendMenu(menu, MfSeparator, 0, "");
             Native.AppendMenu(menu, MfString, CommandExit, "Exit");
             Native.GetCursorPos(out var point);
             Native.SetForegroundWindow(_hwnd);
@@ -296,6 +306,10 @@ internal sealed partial class WindowsTrayIcon : IDisposable
             if (command == CommandOpen)
             {
                 OpenFromIcon();
+            }
+            else if (command == CommandAutostart)
+            {
+                ToggleAutostart();
             }
             else if (command == CommandExit)
             {
@@ -306,6 +320,63 @@ internal sealed partial class WindowsTrayIcon : IDisposable
         {
             Native.DestroyMenu(menu);
         }
+    }
+
+    private uint AutostartFlags()
+    {
+        try
+        {
+            var status = _autostart.GetStatus();
+            var flags = MfString;
+            if (!status.Supported)
+            {
+                flags |= MfGrayed;
+            }
+
+            if (status.Enabled)
+            {
+                flags |= MfChecked;
+            }
+
+            return flags;
+        }
+        catch (Exception exception)
+        {
+            LogAutostartFailed(exception.Message);
+            return MfString | MfGrayed;
+        }
+    }
+
+    private void ToggleAutostart()
+    {
+        bool enable;
+        try
+        {
+            var status = _autostart.GetStatus();
+            if (!status.Supported)
+            {
+                return;
+            }
+
+            enable = !status.Enabled;
+        }
+        catch (Exception exception)
+        {
+            LogAutostartFailed(exception.Message);
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _autostart.SetEnabledAsync(enable);
+            }
+            catch (Exception exception)
+            {
+                LogAutostartFailed(exception.Message);
+            }
+        });
     }
 
     private static IntPtr WndProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
@@ -352,6 +423,9 @@ internal sealed partial class WindowsTrayIcon : IDisposable
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "RigForge tray icon is unavailable: {Error}")]
     private partial void LogTrayFailed(string error);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not change start with Windows: {Error}")]
+    private partial void LogAutostartFailed(string error);
 
     private static partial class Native
     {

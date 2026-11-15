@@ -15,7 +15,17 @@ public sealed record DaemonInfoDto(
     DateTimeOffset StartedAt,
     long PrivateBytes,
     long WorkingSetBytes,
-    long ManagedHeapBytes);
+    long ManagedHeapBytes,
+    string Product = "RigForge",
+    int SessionId = 0,
+    bool AutostartSupported = false,
+    bool AutostartEnabled = false);
+
+/// <summary>Sign-in autostart as reported by the host operating system.</summary>
+public sealed record AutostartStatusDto(bool Supported, bool Enabled, bool TaskRegistered, string? Details = null);
+
+/// <summary>Turns sign-in autostart on or off without stopping the daemon.</summary>
+public sealed record AutostartUpdateRequest(bool Enabled);
 
 /// <summary>Process and lighting-loop sample pushed with telemetry.</summary>
 public sealed record PerformanceMetricsDto(

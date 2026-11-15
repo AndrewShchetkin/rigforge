@@ -244,16 +244,68 @@ describe('systemStateSchema', () => {
     });
   });
 
+  it('accepts product, session, and autostart fields on daemon info', () => {
+    const upgraded = structuredClone(snapshot);
+    Object.assign(upgraded.info, {
+      product: 'RigForge',
+      sessionId: 2,
+      autostartSupported: true,
+      autostartEnabled: false,
+    });
+
+    const parsed = systemStateSchema.safeParse(upgraded);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+
+    expect({
+      product: parsed.data.info.product,
+      sessionId: parsed.data.info.sessionId,
+      autostartSupported: parsed.data.info.autostartSupported,
+      autostartEnabled: parsed.data.info.autostartEnabled,
+    }).toEqual({
+      product: 'RigForge',
+      sessionId: 2,
+      autostartSupported: true,
+      autostartEnabled: false,
+    });
+  });
+
+  it('rejects daemon info when product, session, or autostart fields have the wrong type', () => {
+    const cases = [
+      { product: 1 },
+      { sessionId: '2' },
+      { autostartSupported: 'yes' },
+      { autostartEnabled: 0 },
+    ];
+    for (const extra of cases) {
+      const broken = structuredClone(snapshot);
+      Object.assign(broken.info, extra);
+      expect(systemStateSchema.safeParse(broken).success, JSON.stringify(extra)).toBe(false);
+    }
+  });
+
   it('still accepts a snapshot that omits the new fields', () => {
     const legacy = structuredClone(snapshot) as {
       performance?: unknown;
-      info: { privateBytes?: number };
+      info: {
+        privateBytes?: number;
+        product?: string;
+        sessionId?: number;
+        autostartSupported?: boolean;
+        autostartEnabled?: boolean;
+      };
       devices: Array<{ supportStatus?: string; statusReason?: string | null }>;
       profile: { displays?: unknown; effect: { enabled?: boolean } };
       effects: Array<{ category?: string; usesAudio?: boolean; parameters: Array<{ options?: unknown }> }>;
     };
     delete legacy.performance;
     delete legacy.info.privateBytes;
+    delete legacy.info.product;
+    delete legacy.info.sessionId;
+    delete legacy.info.autostartSupported;
+    delete legacy.info.autostartEnabled;
     const device = legacy.devices[0];
     const described = legacy.effects[0];
     if (!device || !described) {
@@ -269,7 +321,15 @@ describe('systemStateSchema', () => {
     if (firstParameter) {
       delete firstParameter.options;
     }
-    expect(systemStateSchema.safeParse(legacy).success).toBe(true);
+    const parsed = systemStateSchema.safeParse(legacy);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.info.product).toBeUndefined();
+    expect(parsed.data.info.sessionId).toBeUndefined();
+    expect(parsed.data.info.autostartSupported).toBeUndefined();
+    expect(parsed.data.info.autostartEnabled).toBeUndefined();
   });
 
   it('rejects a performance sample with an unknown render mode', () => {

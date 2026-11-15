@@ -22,8 +22,10 @@ src/
   Tools.HardwareScanner/         CLI rigforge-scan: дамп HID, dry-run проба, сенсоры, udev, конфликты
 tests/RigForge.UnitTests/        xUnit v3 (Microsoft.Testing.Platform)
 ui/                              React 19 + TypeScript + Vite + Tailwind 4 + SignalR + react-konva
-deploy/                          задача Windows «при входе», systemd user unit, udev, install-linux.sh, Build-Release.ps1, build-release.sh
-docs/                            Postman-коллекция
+shell/                           Electron-окно конфигуратора (RigForge.exe), splash автозапуска демона, NSIS-инсталлятор
+deploy/                          релизная сборка Setup/ZIP/tar.gz, Linux install/uninstall + .desktop, скрипты разработчика
+.github/workflows/               CI/CD сборки и публикации GitHub Releases (release.yml)
+docs/                            Postman-коллекция, руководство по установке и архитектурные спецификации
 ```
 
 ```mermaid
@@ -252,7 +254,30 @@ Workstation GC без фонового потока; `DOTNET_GCgen0MaxBudget=0x4
 CPU: 2,6 % одного ядра при 60 FPS эффекта на 7 зонах. Framework-dependent publish для win-x64 — 22 МБ
 (нативные PDB из пакетов, в т.ч. 92 МБ `libSkiaSharp.pdb`, исключаются).
 
-## Запуск
+## Установка, автозапуск и удаление (Windows 11 + Linux)
+
+### Пользовательский инсталлятор Windows (`RigForge-Setup-<version>-win-x64.exe`)
+
+Для конечных пользователей собирается самодостаточный (`--self-contained true`, без требования доустанавливать .NET 10 / ASP.NET Core Runtime) пошаговый инсталлятор **Assisted NSIS** (`electron-builder` + `shell/build/installer.nsh`):
+
+1. **Шаги мастера установки:**
+   - выбор папки установки (по умолчанию `C:\Program Files\RigForge`);
+   - кастомная страница опций: чекбоксы **«Start RigForge automatically when I sign in to Windows»** (включён по умолчанию; при обновлении считывает предыдущий выбор из `HKLM\Software\RigForge\AutostartOnSignIn`) и **«Create a Desktop shortcut»** (включён по умолчанию); ярлык в меню «Пуск» с `rigforge.ico` создаётся всегда;
+   - штатная остановка предыдущего экземпляра (`POST /api/host/shutdown`, ожидание возврата кривых охлаждения и экрана СЖО прошивке), распаковка `RigForge.exe`, `RigForge.Daemon.exe`, `rigforge-scan.exe`, `wwwroot/` и `effects/`, регистрация задачи Планировщика `\RigForge` и добавление записи в «Установленные приложения» Windows (`HKLM\...\Uninstall`).
+   - поддерживаются тихие ключи: `/S`, `/AUTOSTART=0|1`, `/NODESKTOP=1`, `/D=<путь>`.
+2. **Модель привилегий и запуск с ярлыка без повторного UAC:**
+   - демон регистрируется в Планировщике заданий как `\RigForge` (`InteractiveToken` + `HighestAvailable`), привязываясь к владельцу интерактивного процесса `explorer.exe` (защита от over-the-shoulder UAC).
+   - сама задача всегда остаётся в `Settings.Enabled = true` и `AllowStartOnDemand = true` с SDDL-правом `FRFX` для интерактивного пользователя, а опция «Запускать при входе в систему» переключает только `LogonTrigger.Enabled`.
+   - при двойном клике по ярлыку `RigForge` (`RigForge.exe`), если демон уже работает (`/api/health`), окно мгновенно открывает дашборд. Если демон остановлен (автозапуск выключен или нажат `Exit` в трее), открывается `splash.html`, демон поднимается через `schtasks /Run /TN "RigForge"` **без запроса UAC** (с резервным fallback на `RunAs` и кнопками `Start RigForge (Retry)` / `Quit`), и после готовности `/api/health` загружается дашборд.
+   - закрытие окна крестиком завершает только процесс Electron, оставляя `RigForge.Daemon.exe` управлять оборудованием в системном трее. Повторный старт `RigForge.Daemon.exe` перехватывается `SingleInstanceMutex` и просто открывает окно дашборда.
+3. **Управление автозапуском после установки:**
+   - в контекстном меню системного трея (`Open dashboard`, **`Start with Windows`**, `Exit`);
+   - в диалоге **System & Startup** на вкладке `Devices` в UI (`SetAutostart` в SignalR и `GET/PUT /api/host/autostart`, синхронизация между клиентами через `StateChanged`).
+4. **Деинсталляция (`Installed apps` → `RigForge` → `Uninstall`):**
+   - отдельная страница подтверждения предлагает опцию удаления пользовательских данных `%LOCALAPPDATA%\RigForge` (`profile.json`, `devices\`, `effects\`); **по умолчанию галочка снята** и профили сохраняются (в тихом режиме очистка включается только ключом `/PURGE=1`; при обновлении `--updated` данные и задача не удаляются);
+   - перед удалением файлов демон останавливается штатно через `POST /api/host/shutdown` (защищён от браузерного CSRF запретом `Origin`, `Referer`, `Sec-Fetch-Site`), возвращая вентиляторы и экран СЖО прошивке, после чего удаляются задача `\RigForge`, ярлыки, кэш `%APPDATA%\RigForge` и файлы программы.
+
+## Сборка и запуск для разработчика
 
 ```powershell
 # демон (dev): Kestrel на http://127.0.0.1:5757, dry-run профиль есть в launchSettings
@@ -263,13 +288,14 @@ cd ui; npm install; npm run dev
 dotnet run --project src/Tools.HardwareScanner -- hid
 dotnet run --project src/Tools.HardwareScanner -- smbus
 dotnet run --project src/Tools.HardwareScanner -- sensors --watch
-# тесты
+# тесты (C# + UI + Electron shell)
 dotnet test --project tests/RigForge.UnitTests
 cd ui; npm test
-# Windows: сборка UI + publish + задача при входе (от администратора)
-.\deploy\windows\Install-RigForgeTask.ps1
-# релизные каталоги win-x64 и linux-x64
+cd ../shell; npm test
+# полная сборка релиза (RigForge-Setup-<ver>-win-x64.exe, portable .zip, linux .tar.gz, SHA256SUMS.txt)
 .\deploy\Build-Release.ps1
+# установка задачи напрямую из исходников для разработчика (опционально)
+.\deploy\windows\Install-RigForgeTask.ps1
 ```
 
 Перед запуском закройте NZXT CAM, SignalRGB и LightingService (Armoury Crate) — демон предупреждает о них в UI и логе.
@@ -284,8 +310,9 @@ cd ui; npm test
 
 Захват Ambilight — `LinuxX11ScreenCapturer` (X11 и XWayland, 160×90 BGRA). Сессия без `DISPLAY` или без `libX11.so.6` сообщает `IsSupported = false` и не бросает исключение. Аудио — монитор sink: один и тот же `libpulse-simple` у PulseAudio и у PipeWire. Сон цикла — `clock_nanosleep(CLOCK_MONOTONIC)`.
 
-- `deploy/linux/install-linux.sh` — Debian/Ubuntu, Fedora/RHEL, Arch/CachyOS, openSUSE. Кладёт демон в `~/.local/share/rigforge` (готовый `artifacts/rigforge-linux-x64` или `dotnet publish`), ставит `60-rigforge.rules`, `modules-load.d` и `modprobe` для `i2c-dev` / `i2c-piix4` / `i2c-i801`, включает user unit `rigforge.service`. Профиль в `~/.config/rigforge` не трогает.
-- `deploy/Build-Release.ps1` и `deploy/build-release.sh` — `npm ci && npm run build`, затем framework-dependent publish `win-x64` и `linux-x64` (демон и `rigforge-scan`) в `artifacts/rigforge-<rid>` вместе с `deploy/` и `effects/`. `SKIP_UI=1` / `-SkipUi` пропускает фронтенд.
+- `deploy/linux/install-linux.sh` — работает как из распакованного релизного архива `rigforge-linux-x64-<ver>.tar.gz`, так и из репозитория (Debian/Ubuntu, Fedora/RHEL, Arch/CachyOS, openSUSE). Кладёт демон и лаунчер `rigforge-open` в `~/.local/share/rigforge`, ставит `60-rigforge.rules`, `modules-load.d` и `modprobe` для `i2c-dev` / `i2c-piix4` / `i2c-i801`, регистрирует user unit `rigforge.service` (ключ `--no-autostart` пропускает автозапуск при входе) и создаёт ярлык меню приложений `~/.local/share/applications/rigforge.desktop` с иконкой `rigforge.svg`. Профиль в `~/.config/rigforge` не трогает.
+- `deploy/linux/uninstall-linux.sh` — останавливает и удаляет службу, правила udev, `.desktop`-ярлык и файлы программы; профили в `~/.config/rigforge` сохраняются, если не передан флаг `--purge`.
+- `deploy/Build-Release.ps1`, `deploy/build-release.sh` и `.github/workflows/release.yml` — собирают self-contained релизные артефакты (`RigForge-Setup-<ver>-win-x64.exe`, `rigforge-win-x64-<ver>.zip`, `rigforge-linux-x64-<ver>.tar.gz`, `SHA256SUMS.txt`) и публикуют их в GitHub Releases по тегу `v*`.
 
 Вручную по-прежнему достаточно `rigforge-scan udev -o 60-rigforge.rules` в `/etc/udev/rules.d/` и user unit `deploy/linux/rigforge.service`.
 

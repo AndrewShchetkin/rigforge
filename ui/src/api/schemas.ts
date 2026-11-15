@@ -308,6 +308,10 @@ export const systemStateSchema = z.looseObject({
     workingSetBytes: num,
     managedHeapBytes: num,
     privateBytes: num.optional(),
+    product: str.optional(),
+    sessionId: num.optional(),
+    autostartSupported: bool.optional(),
+    autostartEnabled: bool.optional(),
   }),
   devices: z.array(
     z.looseObject({

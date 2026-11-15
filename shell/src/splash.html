@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'unsafe-inline'">
+  <title>RigForge</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09090b;
+      --fg: #fafafa;
+      --muted: #a1a1aa;
+      --accent: #7c3aed;
+      --accent-2: #a78bfa;
+      --danger: #f87171;
+      --panel: #18181b;
+      --line: rgba(255, 255, 255, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(900px 420px at 50% -10%, rgba(124, 58, 237, 0.28), transparent 60%),
+        var(--bg);
+    }
+
+    main {
+      width: min(440px, calc(100% - 48px));
+      text-align: center;
+    }
+
+    .mark {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 22px;
+      background: linear-gradient(160deg, rgba(124, 58, 237, 0.35), rgba(124, 58, 237, 0.08));
+      border: 1px solid rgba(167, 139, 250, 0.35);
+      box-shadow: 0 16px 40px rgba(124, 58, 237, 0.18);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+
+    #status {
+      min-height: 48px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      margin: 28px auto 0;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.08);
+      border-top-color: var(--accent-2);
+      animation: spin 0.8s linear infinite;
+    }
+
+    #error {
+      margin-top: 28px;
+      padding: 16px;
+      text-align: left;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+
+    #error p {
+      margin: 0;
+      color: var(--danger);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      flex: 1;
+      appearance: none;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 2px;
+    }
+
+    #retry {
+      background: var(--accent);
+      color: white;
+    }
+
+    #retry:hover { background: #6d28d9; }
+
+    #quit {
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--line);
+    }
+
+    #quit:hover { background: rgba(255, 255, 255, 0.04); }
+
+    [hidden] { display: none !important; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <path d="M18 3.5 31 11v14L18 32.5 5 25V11L18 3.5Z" stroke="#c4b5fd" stroke-width="1.6"/>
+        <path d="M18 10.5v15M12.2 14.2 18 18l5.8-3.8" stroke="#7c3aed" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1>RigForge</h1>
+    <p id="status">Starting RigForge hardware daemon…</p>
+    <div id="spinner" class="spinner" role="status" aria-label="Starting"></div>
+    <section id="error" hidden>
+      <p id="error-text"></p>
+      <div class="actions">
+        <button id="retry" type="button">Start RigForge (Retry)</button>
+        <button id="quit" type="button">Quit</button>
+      </div>
+    </section>
+  </main>
+  <script>
+    const status = document.getElementById('status');
+    const spinner = document.getElementById('spinner');
+    const error = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+
+    function render(state) {
+      if (!state || state.phase === 'starting' || state.phase === 'ready') {
+        error.hidden = true;
+        spinner.hidden = false;
+        status.textContent = state && state.message
+          ? state.message
+          : (state && state.phase === 'ready' ? 'Opening the dashboard…' : 'Starting RigForge hardware daemon…');
+        return;
+      }
+
+      spinner.hidden = true;
+      error.hidden = false;
+      status.textContent = 'RigForge could not open the dashboard.';
+      errorText.textContent = state.message || 'The hardware daemon did not start.';
+    }
+
+    document.getElementById('retry').addEventListener('click', () => {
+      render({ phase: 'starting', message: 'Starting RigForge hardware daemon…' });
+      if (window.rigforgeSplash) window.rigforgeSplash.retry();
+    });
+
+    document.getElementById('quit').addEventListener('click', () => {
+      if (window.rigforgeSplash) window.rigforgeSplash.quit();
+    });
+
+    if (window.rigforgeSplash) {
+      window.rigforgeSplash.onState(render);
+    }
+  </script>
+</body>
+</html>

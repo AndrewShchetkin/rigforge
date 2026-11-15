@@ -4,6 +4,7 @@ using RigForge.Application.Effects;
 using RigForge.Application.Profiles;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
+using RigForge.Host.Daemon.Hosting;
 using RigForge.Host.Daemon.Services;
 
 namespace RigForge.Host.Daemon.Hubs;
@@ -17,7 +18,8 @@ public sealed class ControlHub(
     ProfileService profiles,
     DeviceManager devices,
     ClientRegistry clients,
-    EffectRenderEngine effects) : Hub<IControlClient>
+    EffectRenderEngine effects,
+    IAutostartService autostart) : Hub<IControlClient>
 {
     public override Task OnConnectedAsync()
     {
@@ -94,6 +96,21 @@ public sealed class ControlHub(
     {
         using var _ = clients.BeginMutationScope(Context.ConnectionId);
         await devices.ScanAsync(Context.ConnectionAborted);
+        return state.Build();
+    }
+
+    public async Task<SystemStateDto> SetAutostart(bool enabled)
+    {
+        using var _ = clients.BeginMutationScope(Context.ConnectionId);
+        try
+        {
+            await autostart.SetEnabledAsync(enabled, Context.ConnectionAborted);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new HubException(exception.Message);
+        }
+
         return state.Build();
     }
 

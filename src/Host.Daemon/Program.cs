@@ -1,13 +1,40 @@
+using System.Runtime.Versioning;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.HostFiltering;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging.EventLog;
 using RigForge.Host.Daemon;
 using RigForge.Host.Daemon.Api;
+using RigForge.Host.Daemon.Hosting;
 using RigForge.Host.Daemon.Tray;
 using RigForge.Host.Daemon.Hubs;
 using RigForge.Host.Daemon.Security;
 using RigForge.Host.Daemon.Services;
+
+if (await DaemonCliHandler.TryExecuteAsync(args) is int cliExitCode)
+{
+    Environment.Exit(cliExitCode);
+}
+
+SingleInstanceMutex? singleInstance = null;
+if (OperatingSystem.IsWindows())
+{
+    singleInstance = new SingleInstanceMutex();
+    if (!singleInstance.IsFirstInstance)
+    {
+        try
+        {
+            OpenDashboardForExistingInstance();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+        }
+
+        Environment.Exit(0);
+    }
+}
 
 // Slim builder: no IIS integration, no HTTPS/certificate plumbing, fewer default services → smaller footprint.
 // Content root = binary folder: services and logon tasks start with System32 as the working directory.
@@ -53,7 +80,6 @@ builder.Services
     .AddJsonProtocol(options => options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddSingleton<ClientRegistry>();
-builder.Services.AddSingleton<SystemStateBuilder>();
 
 // Hosted services start in this order and stop in reverse: devices are detected before the loops start
 // and released only after every loop has handed its hardware back (fan curves restored, LCD on firmware view).
@@ -95,3 +121,25 @@ if (hasUi)
 }
 
 app.Run();
+singleInstance?.Dispose();
+
+[SupportedOSPlatform("windows")]
+static void OpenDashboardForExistingInstance()
+{
+    if (!TrayIconPolicy.ShouldShow(isWindows: true, WindowsServiceHelpers.IsWindowsService()))
+    {
+        return;
+    }
+
+    using var loggerFactory = LoggerFactory.Create(static _ => { });
+    var launcher = new ElectronDashboardLauncher(loggerFactory.CreateLogger<ElectronDashboardLauncher>());
+    var executable = TrayIconPolicy.FindShellExecutable(
+        TrayIconPolicy.ShellCandidates(AppContext.BaseDirectory, TrayIconPolicy.FindRepositoryRoot(AppContext.BaseDirectory)),
+        File.Exists);
+    if (executable is null)
+    {
+        return;
+    }
+
+    launcher.Launch(executable, TrayIconPolicy.FallbackDashboardUrl);
+}
