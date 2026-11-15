@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\rigforge.ico" CopyToOutputDirectory="PreserveNewest" TargetPath="rigforge.ico" Link="rigforge.ico" />
   </ItemGroup>
 
   <ItemGroup>

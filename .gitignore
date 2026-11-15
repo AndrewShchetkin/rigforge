@@ -12,6 +12,7 @@ TestResults/
 # Node / UI
 node_modules/
 ui/dist/
+shell/dist/
 *.tsbuildinfo
 
 # UI build output is copied into the daemon at build time

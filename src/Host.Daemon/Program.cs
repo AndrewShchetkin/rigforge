@@ -4,6 +4,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.EventLog;
 using RigForge.Host.Daemon;
 using RigForge.Host.Daemon.Api;
+using RigForge.Host.Daemon.Tray;
 using RigForge.Host.Daemon.Hubs;
 using RigForge.Host.Daemon.Security;
 using RigForge.Host.Daemon.Services;
@@ -62,6 +63,7 @@ builder.Services.AddHostedService<FanControlWorker>();
 builder.Services.AddHostedService<EffectRenderWorker>();
 builder.Services.AddHostedService<LcdRenderWorker>();
 builder.Services.AddHostedService<UiBroadcastService>();
+builder.Services.AddHostedService<TrayIconService>();
 
 var app = builder.Build();
 

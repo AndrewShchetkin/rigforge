@@ -20,6 +20,20 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 
+function Copy-RigForgeShell([string] $Repository, [string] $Destination) {
+    $unpacked = Join-Path $Repository 'shell\dist\win-unpacked'
+    if (-not (Test-Path -LiteralPath (Join-Path $unpacked 'RigForge.exe'))) {
+        throw "RigForge.exe was not produced at $unpacked."
+    }
+
+    Copy-Item -Path (Join-Path $unpacked '*') -Destination $Destination -Recurse -Force
+}
+
+# Stop any running scheduled task or stray RigForge.Daemon processes so files in $InstallDirectory
+# are unlocked for dotnet publish and two daemon instances never fight over hardware buses.
+Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+Get-Process -Name 'RigForge.Daemon', 'RigForge' -ErrorAction SilentlyContinue | Stop-Process -Force
+
 if (-not $SkipPublish) {
     Push-Location (Join-Path $repository 'ui')
     try {
@@ -32,6 +46,19 @@ if (-not $SkipPublish) {
 
     dotnet publish (Join-Path $repository 'src\Host.Daemon\RigForge.Host.Daemon.csproj') `
         -c Release -r win-x64 --self-contained false -o $InstallDirectory
+
+    Push-Location (Join-Path $repository 'shell')
+    try {
+        npm ci
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed in shell/." }
+        npm run dist
+        if ($LASTEXITCODE -ne 0) { throw "Electron shell build failed." }
+    }
+    finally {
+        Pop-Location
+    }
+
+    Copy-RigForgeShell -Repository $repository -Destination $InstallDirectory
 }
 
 $executable = Join-Path $InstallDirectory 'RigForge.Daemon.exe'
@@ -50,5 +77,5 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Pr
     -Description 'RigForge: RGB, fan/pump and AIO screen daemon' -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 
-Write-Host "RigForge is running. Open http://127.0.0.1:5757 for the configurator."
+Write-Host "RigForge is running. Open the dashboard from the notification area icon, or at http://127.0.0.1:5757/#/dashboard."
 Write-Host "Close NZXT CAM, SignalRGB and Armoury Crate's LightingService: they fight over the same controllers."

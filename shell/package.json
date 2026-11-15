@@ -1,0 +1,39 @@
+{
+  "name": "rigforge-shell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Native window for the RigForge dashboard.",
+  "author": "RigForge",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.rigforge.shell",
+    "productName": "RigForge",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/rigforge.ico",
+        "to": "rigforge.ico"
+      }
+    ],
+    "win": {
+      "icon": "assets/rigforge.ico",
+      "executableName": "RigForge",
+      "target": "dir",
+      "signExecutable": false
+    }
+  }
+}
