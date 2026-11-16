@@ -1,7 +1,8 @@
 namespace RigForge.Infrastructure.Linux.Smbus;
 
 /// <summary>
-/// Chipset SMBus adapter names exposed by <c>/sys/class/i2c-adapter/i2c-*/name</c>.
+/// Chipset SMBus adapter names exposed by <c>/sys/class/i2c-adapter/i2c-*/name</c>
+/// or, when that class is absent, <c>/sys/class/i2c-dev/i2c-*/name</c>.
 /// Display DDC buses (NVIDIA i2c, AMDGPU DM) are never accepted.
 /// </summary>
 internal static class LinuxChipsetSmbus

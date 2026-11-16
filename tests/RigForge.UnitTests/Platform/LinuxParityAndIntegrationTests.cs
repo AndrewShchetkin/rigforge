@@ -103,6 +103,99 @@ public sealed class LinuxParityAndIntegrationTests
     }
 
     [Fact]
+    [SupportedOSPlatform("linux")]
+    public void Chipset_smbus_is_discovered_from_i2c_dev_when_the_i2c_adapter_class_is_missing()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var root = Directory.CreateTempSubdirectory("rigforge-i2c-dev-");
+        try
+        {
+            var sysfs = Path.Combine(root.FullName, "sys");
+            var dev = Path.Combine(root.FullName, "dev");
+            WriteI2cClassAdapter(sysfs, "i2c-dev", "i2c-1", "NVIDIA i2c adapter 1 at 1:00.0", dev);
+            WriteI2cClassAdapter(sysfs, "i2c-dev", "i2c-13", "SMBus PIIX4 adapter port 0 at 0b00", dev);
+
+            var factory = new LinuxI2cSmbusControllerFactory(sysfs, dev, Path.Combine(root.FullName, "udev"));
+
+            Assert.True(factory.IsAvailable);
+            Assert.Contains("available", factory.DiagnosticStatus, StringComparison.OrdinalIgnoreCase);
+            var controllers = factory.OpenControllers();
+            try
+            {
+                var bus = Assert.Single(controllers);
+                Assert.Equal("i2c-13", bus.BusName);
+                Assert.Contains("PIIX4", bus.Location, StringComparison.Ordinal);
+            }
+            finally
+            {
+                foreach (var controller in controllers)
+                {
+                    controller.Dispose();
+                }
+            }
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void Chipset_smbus_keeps_the_i2c_adapter_class_when_both_classes_exist()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var root = Directory.CreateTempSubdirectory("rigforge-i2c-adapter-");
+        try
+        {
+            var sysfs = Path.Combine(root.FullName, "sys");
+            var dev = Path.Combine(root.FullName, "dev");
+            WriteI2cClassAdapter(sysfs, "i2c-adapter", "i2c-13", "SMBus PIIX4 adapter port 0 at 0b00", dev);
+            WriteI2cClassAdapter(sysfs, "i2c-dev", "i2c-15", "SMBus PIIX4 adapter port 1 at 0b20", dev);
+
+            var factory = new LinuxI2cSmbusControllerFactory(sysfs, dev, Path.Combine(root.FullName, "udev"));
+            var controllers = factory.OpenControllers();
+            try
+            {
+                var bus = Assert.Single(controllers);
+                Assert.Equal("i2c-13", bus.BusName);
+            }
+            finally
+            {
+                foreach (var controller in controllers)
+                {
+                    controller.Dispose();
+                }
+            }
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    private static void WriteI2cClassAdapter(string sysfs, string className, string busId, string name, string devRoot)
+    {
+        var dir = Path.Combine(sysfs, "class", className, busId);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "name"), name + "\n");
+        Directory.CreateDirectory(devRoot);
+        var node = Path.Combine(devRoot, busId);
+        if (!File.Exists(node))
+        {
+            File.WriteAllBytes(node, []);
+        }
+    }
+
+    [Fact]
     public void Smbus_policy_requires_a_matching_module_before_any_bus_probe()
     {
         var readable = new FakeSmbusFactory(available: true, canReadSmbios: true);

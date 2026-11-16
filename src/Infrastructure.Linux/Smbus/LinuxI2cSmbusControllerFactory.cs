@@ -28,12 +28,28 @@ internal sealed partial class LinuxI2cSmbusControllerFactory : ISmbusControllerF
 
     internal LinuxI2cSmbusControllerFactory(string sysfsRoot, string devRoot, string udevDataDirectory)
     {
-        _adapterRoot = Path.Combine(sysfsRoot, "class", "i2c-adapter");
+        _adapterRoot = ResolveAdapterClass(sysfsRoot);
         _devRoot = devRoot;
         _dmiPath = Path.Combine(sysfsRoot, "firmware", "dmi", "tables", "DMI");
         _spdRoot = Path.Combine(sysfsRoot, "bus", "i2c", "devices");
         _edacRoot = Path.Combine(sysfsRoot, "devices", "system", "edac");
         _udevDataDirectory = udevDataDirectory;
+    }
+
+    /// <summary>
+    /// Older kernels expose chipset adapters at <c>/sys/class/i2c-adapter</c>. Kernels that only
+    /// register the <c>i2c-dev</c> class (the nodes behind <c>/dev/i2c-*</c>) keep the same
+    /// <c>name</c> file there. Windows never uses this path; it opens SMBus through PawnIO.
+    /// </summary>
+    internal static string ResolveAdapterClass(string sysfsRoot)
+    {
+        var legacy = Path.Combine(sysfsRoot, "class", "i2c-adapter");
+        if (Directory.Exists(legacy))
+        {
+            return legacy;
+        }
+
+        return Path.Combine(sysfsRoot, "class", "i2c-dev");
     }
 
     public string BackendName => "i2c-dev";
