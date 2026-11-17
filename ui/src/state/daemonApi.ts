@@ -37,6 +37,7 @@ export interface DaemonApi {
   importProfile: (profile: RigProfile) => Promise<SystemStateDto | null>;
   upsertDisplay: (deviceId: string, lcd: LcdSettings) => Promise<SystemStateDto | null>;
   removeDisplay: (deviceId: string) => Promise<SystemStateDto | null>;
+  setAutostart: (enabled: boolean) => Promise<SystemStateDto | null>;
 }
 
 export interface DaemonApiSink {
@@ -87,6 +88,7 @@ export function createDaemonApi(client: DaemonClient, sink: DaemonApiSink, toast
     importProfile: (profile) => mutate(() => client.invoke('ImportProfile', profile)),
     upsertDisplay: (deviceId, lcd) => mutate(() => client.invoke('UpsertDisplay', deviceId, lcd)),
     removeDisplay: (deviceId) => mutate(() => client.invoke('RemoveDisplay', deviceId)),
+    setAutostart: (enabled) => mutate(() => client.invoke('SetAutostart', enabled)),
     setPreview: async (channel, enabled) => {
       if (!enabled) {
         sink.clearPreview(channel);

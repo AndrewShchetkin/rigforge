@@ -15,6 +15,32 @@
       "name": "Diagnostics",
       "item": [
         { "name": "Health", "request": { "method": "GET", "url": "{{baseUrl}}/api/health" } },
+        {
+          "name": "Get autostart status",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/host/autostart",
+            "description": "Returns whether sign-in autostart is supported, enabled, and registered."
+          }
+        },
+        {
+          "name": "Set autostart",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"enabled\": true\n}" },
+            "url": "{{baseUrl}}/api/host/autostart",
+            "description": "Enables or disables sign-in autostart without stopping the daemon."
+          }
+        },
+        {
+          "name": "Graceful host shutdown",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/host/shutdown",
+            "description": "202 Accepted. Loopback-only, rejected if browser Origin/Referer/Sec-Fetch-Site headers are present. Restores fan curves and AIO LCD before exiting."
+          }
+        },
         { "name": "Full state", "request": { "method": "GET", "url": "{{baseUrl}}/api/state" } },
         { "name": "Devices", "request": { "method": "GET", "url": "{{baseUrl}}/api/devices" } },
         { "name": "Rescan devices", "request": { "method": "POST", "url": "{{baseUrl}}/api/devices/rescan" } },

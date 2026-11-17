@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.Hosting.WindowsServices;
+using RigForge.Host.Daemon.Hosting;
 
 namespace RigForge.Host.Daemon.Tray;
 
@@ -9,7 +10,7 @@ namespace RigForge.Host.Daemon.Tray;
 /// Shows the tray icon while the daemon runs in an interactive Windows session.
 /// A session-0 service and Linux keep running without one.
 /// </summary>
-internal sealed partial class TrayIconService(IServer server, IHostApplicationLifetime lifetime, ILoggerFactory loggerFactory, ILogger<TrayIconService> logger) : IHostedService
+internal sealed partial class TrayIconService(IServer server, IHostApplicationLifetime lifetime, IAutostartService autostart, ILoggerFactory loggerFactory, ILogger<TrayIconService> logger) : IHostedService
 {
     private IDisposable? _tray;
 
@@ -39,7 +40,7 @@ internal sealed partial class TrayIconService(IServer server, IHostApplicationLi
         }
 
         var launcher = new ElectronDashboardLauncher(loggerFactory.CreateLogger<ElectronDashboardLauncher>());
-        var icon = new WindowsTrayIcon(() => OpenDashboard(launcher), RequestExit, loggerFactory.CreateLogger<WindowsTrayIcon>());
+        var icon = new WindowsTrayIcon(() => OpenDashboard(launcher), RequestExit, autostart, loggerFactory.CreateLogger<WindowsTrayIcon>());
         icon.Start();
         _tray = icon;
     }

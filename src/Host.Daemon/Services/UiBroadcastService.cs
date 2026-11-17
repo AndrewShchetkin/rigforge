@@ -9,6 +9,7 @@ using RigForge.Application.Profiles;
 using RigForge.Application.Telemetry;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
+using RigForge.Host.Daemon.Hosting;
 using RigForge.Host.Daemon.Hubs;
 
 namespace RigForge.Host.Daemon.Services;
@@ -28,6 +29,7 @@ internal sealed partial class UiBroadcastService(
     ProfileService profiles,
     DeviceManager devices,
     PerformanceMonitor performance,
+    IAutostartService autostart,
     ILogger<UiBroadcastService> logger) : BackgroundService
 {
     private static readonly TimeSpan LedPreviewInterval = TimeSpan.FromMilliseconds(50);
@@ -43,6 +45,7 @@ internal sealed partial class UiBroadcastService(
         profiles.Changed += OnProfileChanged;
         devices.DevicesChanged += OnStateChanged;
         clients.SubscriptionsChanged += OnSubscriptionsChanged;
+        autostart.Changed += OnStateChanged;
 
         try
         {
@@ -101,6 +104,7 @@ internal sealed partial class UiBroadcastService(
             profiles.Changed -= OnProfileChanged;
             devices.DevicesChanged -= OnStateChanged;
             clients.SubscriptionsChanged -= OnSubscriptionsChanged;
+            autostart.Changed -= OnStateChanged;
         }
     }
 

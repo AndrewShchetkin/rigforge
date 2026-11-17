@@ -1,6 +1,6 @@
-const http = require('node:http');
 const path = require('node:path');
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const bootstrap = require('./daemonBootstrap.cjs');
 
 const FallbackDashboardUrl = 'http://127.0.0.1:5757/#/dashboard';
 const HealthMissLimit = 3;
@@ -56,24 +56,25 @@ function sameOrigin(target, dashboardUrl) {
   return next.protocol === 'http:' && next.hostname === allowed.hostname && next.port === allowed.port;
 }
 
-function healthUrl(dashboardUrl) {
+function endpoint(dashboardUrl) {
   const url = new URL(dashboardUrl);
-  const port = url.port === '' ? '' : `:${url.port}`;
-  return `http://${url.hostname}${port}/api/health`;
+  return {
+    host: url.hostname,
+    port: url.port === '' ? 80 : Number(url.port),
+  };
 }
 
-function daemonAnswers(url) {
-  return new Promise((resolve) => {
-    const request = http.get(url, { timeout: 1500 }, (response) => {
-      response.resume();
-      resolve(true);
-    });
-    request.on('error', () => resolve(false));
-    request.on('timeout', () => {
-      request.destroy();
-      resolve(false);
-    });
-  });
+function isLocalSplash(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'file:' && url.pathname.replaceAll('\\', '/').toLowerCase().endsWith('/splash.html');
+  } catch {
+    return false;
+  }
+}
+
+function navigationAllowed(target) {
+  return isLocalSplash(target) || sameOrigin(target, currentUrl);
 }
 
 function iconPath() {
@@ -87,22 +88,39 @@ function iconPath() {
 let window = null;
 let currentUrl = FallbackDashboardUrl;
 let healthTimer = null;
+let splashActive = false;
+let bootstrapGeneration = 0;
 
 function watchDaemon(dashboardUrl) {
-  const probe = healthUrl(dashboardUrl);
+  const target = endpoint(dashboardUrl);
   let misses = 0;
+  let pending = false;
   clearInterval(healthTimer);
   healthTimer = setInterval(() => {
-    daemonAnswers(probe).then((alive) => {
-      if (alive) {
+    if (pending) {
+      return;
+    }
+
+    pending = true;
+    bootstrap.probeHealth(target).then((health) => {
+      pending = false;
+      if (!healthTimer) {
+        return;
+      }
+
+      if (health.status === 'ready') {
         misses = 0;
         return;
       }
 
       misses += 1;
       if (misses >= HealthMissLimit) {
+        clearInterval(healthTimer);
+        healthTimer = null;
         app.quit();
       }
+    }).catch(() => {
+      pending = false;
     });
   }, HealthIntervalMs);
 }
@@ -120,8 +138,7 @@ function showWindow() {
   window.focus();
 }
 
-function createWindow(dashboardUrl) {
-  currentUrl = dashboardUrl;
+function createWindow() {
   window = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -133,6 +150,7 @@ function createWindow(dashboardUrl) {
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -145,22 +163,103 @@ function createWindow(dashboardUrl) {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
   window.webContents.on('will-navigate', (event, url) => {
-    if (!sameOrigin(url, currentUrl)) {
+    if (!navigationAllowed(url)) {
       event.preventDefault();
     }
   });
   window.webContents.on('will-redirect', (event, url) => {
-    if (!sameOrigin(url, currentUrl)) {
+    if (!navigationAllowed(url)) {
       event.preventDefault();
     }
   });
   window.on('closed', () => {
     window = null;
   });
-
-  watchDaemon(dashboardUrl);
-  window.loadURL(dashboardUrl);
 }
+
+function sendSplash(state) {
+  if (!splashActive || !window || window.isDestroyed()) {
+    return;
+  }
+
+  window.webContents.send('splash:state', state);
+}
+
+async function showDashboard(dashboardUrl) {
+  splashActive = false;
+  currentUrl = dashboardUrl;
+  watchDaemon(dashboardUrl);
+  await window.loadURL(dashboardUrl);
+}
+
+async function bootstrapDashboard(dashboardUrl) {
+  const generation = ++bootstrapGeneration;
+  splashActive = true;
+  currentUrl = dashboardUrl;
+  const target = endpoint(dashboardUrl);
+
+  try {
+    const result = await bootstrap.ensureDaemon({
+      host: target.host,
+      port: target.port,
+      platform: process.platform,
+      probeHealth: () => bootstrap.probeHealth(target),
+      startScheduledTask: bootstrap.createScheduledTaskStarter(),
+      startElevatedExecutable: bootstrap.createElevatedStarter(),
+      startUserService: bootstrap.createUserServiceStarter(),
+      execPath: process.execPath,
+      packaged: app.isPackaged,
+      repoRoot: path.resolve(__dirname, '..', '..'),
+      onState: (state) => {
+        if (generation !== bootstrapGeneration) {
+          return;
+        }
+
+        sendSplash(state);
+      },
+    });
+
+    if (generation !== bootstrapGeneration) {
+      return;
+    }
+
+    if (result.status === 'ready') {
+      await showDashboard(dashboardUrl);
+    }
+  } catch (error) {
+    if (generation !== bootstrapGeneration) {
+      return;
+    }
+
+    sendSplash({
+      phase: 'error',
+      code: 'start-failed',
+      message: error instanceof Error ? error.message : 'RigForge could not start the hardware daemon.',
+    });
+  }
+}
+
+function splashCommandAllowed(event) {
+  return splashActive && isLocalSplash(event.sender.getURL());
+}
+
+ipcMain.on('splash:retry', (event) => {
+  if (!splashCommandAllowed(event)) {
+    return;
+  }
+
+  bootstrapDashboard(currentUrl).catch((error) => {
+    console.error(error);
+  });
+});
+
+ipcMain.on('splash:quit', (event) => {
+  if (!splashCommandAllowed(event)) {
+    return;
+  }
+
+  app.quit();
+});
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -169,6 +268,11 @@ if (!app.requestSingleInstanceLock()) {
   app.setAppUserModelId('com.rigforge.shell');
 
   app.on('second-instance', (_event, argv) => {
+    if (splashActive) {
+      showWindow();
+      return;
+    }
+
     const next = dashboardUrlFromArgs(argv);
     if (window && !window.isDestroyed() && next !== currentUrl) {
       currentUrl = next;
@@ -179,7 +283,27 @@ if (!app.requestSingleInstanceLock()) {
     showWindow();
   });
 
+  // Closing the window leaves RigForge.Daemon.exe running in the tray.
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => clearInterval(healthTimer));
-  app.whenReady().then(() => createWindow(dashboardUrlFromArgs(process.argv)));
+  app.on('before-quit', () => {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  });
+
+  app.whenReady().then(async () => {
+    const dashboardUrl = dashboardUrlFromArgs(process.argv);
+    currentUrl = dashboardUrl;
+    const health = await bootstrap.probeHealth(endpoint(dashboardUrl));
+    createWindow();
+    if (health.status === 'ready') {
+      await showDashboard(dashboardUrl);
+      return;
+    }
+
+    await window.loadFile(path.join(__dirname, 'splash.html'));
+    await bootstrapDashboard(dashboardUrl);
+  }).catch((error) => {
+    console.error(error);
+    app.quit();
+  });
 }

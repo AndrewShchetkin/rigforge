@@ -80,7 +80,7 @@ export function DevicesPage() {
             aria-expanded={setupOpen}
           >
             <ShieldIcon className="size-4" />
-            OS Permissions / udev
+            System & Startup
             {linux && (
               <span className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase">
                 Linux

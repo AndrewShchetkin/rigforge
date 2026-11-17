@@ -7,7 +7,9 @@
   "main": "src/main.cjs",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win dir"
+    "dist": "electron-builder --win nsis dir",
+    "dist:dir": "electron-builder --win dir",
+    "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {
     "electron": "45.3.2",
@@ -16,6 +18,8 @@
   "build": {
     "appId": "com.rigforge.shell",
     "productName": "RigForge",
+    "artifactName": "RigForge-Setup-${version}-win-${arch}.${ext}",
+    "compression": "maximum",
     "directories": {
       "output": "dist"
     },
@@ -29,11 +33,36 @@
         "to": "rigforge.ico"
       }
     ],
+    "extraFiles": [
+      {
+        "from": "../artifacts/stage/win-x64-daemon",
+        "to": ".",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../effects",
+        "to": "effects",
+        "filter": ["**/*"]
+      }
+    ],
     "win": {
       "icon": "assets/rigforge.ico",
       "executableName": "RigForge",
-      "target": "dir",
+      "target": ["nsis", "dir"],
       "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "RigForge",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "RigForge",
+      "include": "build/installer.nsh"
     }
   }
 }

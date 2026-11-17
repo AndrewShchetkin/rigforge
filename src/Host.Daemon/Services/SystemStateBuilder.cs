@@ -11,6 +11,7 @@ using RigForge.Application.Telemetry;
 using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
+using RigForge.Host.Daemon.Hosting;
 using RigForge.Infrastructure.CrossPlatform.Diagnostics;
 
 namespace RigForge.Host.Daemon.Services;
@@ -23,7 +24,8 @@ public sealed class SystemStateBuilder(
     FanControlEngine fans,
     EffectRegistry effects,
     CanvasLayoutService layout,
-    PerformanceMonitor performance)
+    PerformanceMonitor performance,
+    IAutostartService autostart)
 {
     private static readonly TimeSpan WarningsCacheDuration = TimeSpan.FromSeconds(10);
     private static readonly string Version =
@@ -55,13 +57,18 @@ public sealed class SystemStateBuilder(
     public DaemonInfoDto BuildInfo()
     {
         using var process = Process.GetCurrentProcess();
+        var status = autostart.GetStatus();
         return new DaemonInfoDto(
             Version,
             Platform,
             StartedAt,
             process.PrivateMemorySize64,
             process.WorkingSet64,
-            GC.GetTotalMemory(forceFullCollection: false));
+            GC.GetTotalMemory(forceFullCollection: false),
+            Product: "RigForge",
+            SessionId: process.SessionId,
+            AutostartSupported: status.Supported,
+            AutostartEnabled: status.Enabled);
     }
 
     private static DateTimeOffset GetStartedAt()
