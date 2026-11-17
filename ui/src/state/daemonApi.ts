@@ -1,4 +1,5 @@
 import type {
+  ColorPalette,
   DeviceColorCorrection,
   EffectSettings,
   FanCurve,
@@ -24,6 +25,8 @@ export interface DaemonApi {
   updateLcd: (lcd: LcdSettings) => Promise<SystemStateDto | null>;
   upsertColorCorrection: (correction: DeviceColorCorrection) => Promise<SystemStateDto | null>;
   removeColorCorrection: (deviceId: string) => Promise<SystemStateDto | null>;
+  upsertColorPalette: (palette: ColorPalette) => Promise<SystemStateDto | null>;
+  removeColorPalette: (paletteId: string) => Promise<SystemStateDto | null>;
   rescanDevices: () => Promise<SystemStateDto | null>;
   setPreview: (channel: PreviewChannel, enabled: boolean) => Promise<void>;
   /** Flash one device, or one zone, cyan. Resolves false when the daemon rejects the call. */
@@ -61,6 +64,8 @@ export function createDaemonApi(client: DaemonClient, sink: DaemonApiSink, toast
     updateLcd: (lcd) => mutate(() => client.invoke('UpdateLcd', lcd)),
     upsertColorCorrection: (correction) => mutate(() => client.invoke('UpsertColorCorrection', correction)),
     removeColorCorrection: (deviceId) => mutate(() => client.invoke('RemoveColorCorrection', deviceId)),
+    upsertColorPalette: (palette) => mutate(() => client.invoke('UpsertColorPalette', palette)),
+    removeColorPalette: (paletteId) => mutate(() => client.invoke('RemoveColorPalette', paletteId)),
     rescanDevices: () => mutate(() => client.invoke('RescanDevices')),
     identifyDevice: async (deviceId, zoneId) => {
       try {

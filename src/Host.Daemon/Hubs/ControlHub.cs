@@ -54,6 +54,12 @@ public sealed class ControlHub(
     public Task<SystemStateDto> RemoveColorCorrection(string deviceId) =>
         ApplyAsync(Required(deviceId, nameof(deviceId)), (p, id, ct) => p.RemoveColorCorrectionAsync(id, ct));
 
+    public Task<SystemStateDto> UpsertColorPalette(ColorPalette palette) =>
+        ApplyAsync(Required(palette, nameof(palette)), (p, item, ct) => p.UpsertColorPaletteAsync(item, ct));
+
+    public Task<SystemStateDto> RemoveColorPalette(string paletteId) =>
+        ApplyAsync(Required(paletteId, nameof(paletteId)), (p, id, ct) => p.RemoveColorPaletteAsync(id, ct));
+
     public Task IdentifyDevice(string deviceId, string? zoneId = null)
     {
         if (string.IsNullOrWhiteSpace(deviceId))

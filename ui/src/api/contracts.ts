@@ -264,6 +264,13 @@ export interface DeviceColorCorrection {
   whiteBalance: string;
 }
 
+/** Named #RRGGBB list. Built-in palettes use the same shape but are not stored on the profile. */
+export interface ColorPalette {
+  id: string;
+  name: string;
+  colors: readonly string[];
+}
+
 export interface RigProfile {
   schemaVersion: number;
   canvas: VirtualCanvas;
@@ -277,6 +284,8 @@ export interface RigProfile {
   displays?: Record<string, LcdSettings>;
   /** Older daemons omit this. Treat a missing array as no corrections. */
   colorCorrections?: DeviceColorCorrection[];
+  /** Older daemons omit this. Treat a missing array as no saved palettes. */
+  colorPalettes?: ColorPalette[];
 }
 
 export interface SystemStateDto {
@@ -304,6 +313,8 @@ export interface DaemonHubMethods {
   UpdateLcd(lcd: LcdSettings): Promise<SystemStateDto>;
   UpsertColorCorrection(correction: DeviceColorCorrection): Promise<SystemStateDto>;
   RemoveColorCorrection(deviceId: string): Promise<SystemStateDto>;
+  UpsertColorPalette(palette: ColorPalette): Promise<SystemStateDto>;
+  RemoveColorPalette(paletteId: string): Promise<SystemStateDto>;
   RescanDevices(): Promise<SystemStateDto>;
   /** Opt-in to high-rate preview streams; only enable while the corresponding page is visible. */
   SetPreview(channel: PreviewChannel, enabled: boolean): Promise<void>;

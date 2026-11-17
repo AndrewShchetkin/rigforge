@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RigForge.Application;
@@ -13,6 +14,7 @@ using RigForge.Core.Interfaces;
 using RigForge.Core.Models;
 using RigForge.Host.Daemon.Contracts;
 using RigForge.Host.Daemon.Hubs;
+using RigForge.Infrastructure.CrossPlatform;
 using RigForge.Infrastructure.CrossPlatform.Persistence;
 using RigForge.Infrastructure.CrossPlatform.Platform;
 using RigForge.Infrastructure.Linux.Hardware;
@@ -125,6 +127,209 @@ public sealed class ProfileTests
         }).IsValid);
 
         Assert.False(_validator.Validate(new RigProfile { ColorCorrections = null! }).IsValid);
+    }
+
+    [Fact]
+    public void Color_palettes_require_a_unique_id_a_unique_name_and_hex_colors()
+    {
+        Assert.False(_validator.Validate(new RigProfile { ColorPalettes = null! }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "Sunset", Colors = null! }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "   ", Colors = ["#FF0000"] }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = new string('n', 33), Colors = ["#FF0000"] }],
+        }).IsValid);
+        Assert.True(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = new string('n', 32), Colors = ["#FF0000"] }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "", Name = "Sunset", Colors = ["#FF0000"] }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = new string('i', 65), Name = "Sunset", Colors = ["#FF0000"] }],
+        }).IsValid);
+        Assert.True(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = new string('i', 64), Name = "Sunset", Colors = ["#FF0000"] }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "Sunset", Colors = [] }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "Sunset", Colors = Enumerable.Repeat("#FF0000", 9).ToArray() }],
+        }).IsValid);
+        Assert.True(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "Sunset", Colors = Enumerable.Repeat("#FF0000", 8).ToArray() }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "Sunset", Colors = ["red"] }],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes =
+            [
+                new ColorPalette { Id = "a", Name = "Sunset", Colors = ["#FF0000"] },
+                new ColorPalette { Id = "a", Name = "Ocean", Colors = ["#0000FF"] },
+            ],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes =
+            [
+                new ColorPalette { Id = "a", Name = "Sunset", Colors = ["#FF0000"] },
+                new ColorPalette { Id = "b", Name = "sunset", Colors = ["#0000FF"] },
+            ],
+        }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes =
+            [
+                new ColorPalette { Id = "a", Name = "Закат", Colors = ["#FF8800"] },
+                new ColorPalette { Id = "b", Name = "закат", Colors = ["#0000FF"] },
+            ],
+        }).IsValid);
+        Assert.True(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [new ColorPalette { Id = "a", Name = "  Закат  ", Colors = ["#ff8800"] }],
+        }).IsValid);
+
+        var thirtyTwo = Enumerable.Range(0, 32)
+            .Select(i => new ColorPalette { Id = $"p{i}", Name = $"Palette {i}", Colors = ["#FFFFFF"] })
+            .ToArray();
+        Assert.True(_validator.Validate(new RigProfile { ColorPalettes = thirtyTwo }).IsValid);
+        Assert.False(_validator.Validate(new RigProfile
+        {
+            ColorPalettes = [.. thirtyTwo, new ColorPalette { Id = "overflow", Name = "Overflow", Colors = ["#FFFFFF"] }],
+        }).IsValid);
+    }
+
+    [Fact]
+    public void Null_color_palette_entry_fails_validation_without_throwing()
+    {
+        const string json = """
+            {
+              "colorPalettes": [ null, { "id": "a", "name": "Sunset", "colors": ["#FF0000"] } ]
+            }
+            """;
+
+        var loaded = JsonSerializer.Deserialize(json, ProfileJsonContext.Default.RigProfile);
+        var profile = new RigProfile { ColorPalettes = loaded!.ColorPalettes };
+
+        var result = _validator.Validate(profile);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.PropertyName.Contains("ColorPalettes", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Upsert_color_palette_appends_then_replaces_and_normalizes()
+    {
+        var profiles = new ProfileService(new InMemoryProfileStore(), _validator, NullLogger<ProfileService>.Instance);
+
+        var first = await profiles.UpsertColorPaletteAsync(
+            new ColorPalette { Id = "a", Name = "  Закат  ", Colors = ["#ff00aa"] },
+            TestContext.Current.CancellationToken);
+        Assert.True(first.IsValid);
+        var saved = Assert.Single(profiles.Current.ColorPalettes);
+        Assert.Equal("a", saved.Id);
+        Assert.Equal("Закат", saved.Name);
+        Assert.Equal("#FF00AA", Assert.Single(saved.Colors));
+
+        var second = await profiles.UpsertColorPaletteAsync(
+            new ColorPalette { Id = "b", Name = "Ocean", Colors = ["#0000ff", "#ffffff"] },
+            TestContext.Current.CancellationToken);
+        Assert.True(second.IsValid);
+        Assert.Equal(["a", "b"], profiles.Current.ColorPalettes.Select(palette => palette.Id));
+
+        var replaced = await profiles.UpsertColorPaletteAsync(
+            new ColorPalette { Id = "a", Name = "Dawn", Colors = ["#112233"] },
+            TestContext.Current.CancellationToken);
+        Assert.True(replaced.IsValid);
+        Assert.Equal(["a", "b"], profiles.Current.ColorPalettes.Select(palette => palette.Id));
+        Assert.Equal("Dawn", profiles.Current.ColorPalettes[0].Name);
+        Assert.Equal(["#112233"], profiles.Current.ColorPalettes[0].Colors);
+        Assert.Equal("Ocean", profiles.Current.ColorPalettes[1].Name);
+
+        var duplicate = await profiles.UpsertColorPaletteAsync(
+            new ColorPalette { Id = "c", Name = "ocean", Colors = ["#00FF00"] },
+            TestContext.Current.CancellationToken);
+        Assert.False(duplicate.IsValid);
+        Assert.Equal(["a", "b"], profiles.Current.ColorPalettes.Select(palette => palette.Id));
+
+        var removed = await profiles.RemoveColorPaletteAsync("a", TestContext.Current.CancellationToken);
+        Assert.True(removed.IsValid);
+        Assert.Equal("b", Assert.Single(profiles.Current.ColorPalettes).Id);
+
+        var missing = await profiles.RemoveColorPaletteAsync("missing", TestContext.Current.CancellationToken);
+        Assert.True(missing.IsValid);
+        Assert.Equal("b", Assert.Single(profiles.Current.ColorPalettes).Id);
+    }
+
+    [Fact]
+    public async Task Invalid_profile_keeps_valid_color_palettes()
+    {
+        var store = new InMemoryProfileStore
+        {
+            Saved = new RigProfile
+            {
+                Effect = new EffectSettings { EffectId = "nope" },
+                ColorPalettes =
+                [
+                    new ColorPalette { Id = "good", Name = "Sunset", Colors = ["#FF0000"] },
+                    new ColorPalette { Id = "bad", Name = "Broken", Colors = ["nope"] },
+                ],
+            },
+        };
+        var service = new ProfileService(store, _validator, NullLogger<ProfileService>.Instance);
+
+        await service.InitializeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("good", Assert.Single(service.Current.ColorPalettes).Id);
+        Assert.Equal(new EffectSettings().EffectId, service.Current.Effect.EffectId);
+    }
+
+    [Fact]
+    public async Task Missing_color_palettes_property_loads_as_an_empty_list_without_rewriting()
+    {
+        var directory = Directory.CreateTempSubdirectory("rigforge-palette-test");
+        try
+        {
+            var store = new JsonProfileStore(Options.Create(new StorageOptions { DataDirectory = directory.FullName }));
+            await store.SaveAsync(
+                new RigProfile { Canvas = new VirtualCanvas { Width = 400 } },
+                TestContext.Current.CancellationToken);
+
+            var node = JsonNode.Parse(await File.ReadAllTextAsync(store.FilePath, TestContext.Current.CancellationToken))!.AsObject();
+            node.Remove("colorPalettes");
+            await File.WriteAllTextAsync(store.FilePath, node.ToJsonString(), TestContext.Current.CancellationToken);
+
+            var service = new ProfileService(store, _validator, NullLogger<ProfileService>.Instance);
+            await service.InitializeAsync(TestContext.Current.CancellationToken);
+
+            Assert.NotNull(service.Current.ColorPalettes);
+            Assert.Empty(service.Current.ColorPalettes);
+            Assert.Equal(400, service.Current.Canvas.Width);
+            Assert.Empty(Directory.GetFiles(directory.FullName, "profile.json.corrupt.*"));
+            var onDisk = await File.ReadAllTextAsync(store.FilePath, TestContext.Current.CancellationToken);
+            Assert.DoesNotContain("colorPalettes", onDisk, StringComparison.Ordinal);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [Fact]

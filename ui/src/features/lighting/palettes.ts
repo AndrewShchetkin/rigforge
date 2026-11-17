@@ -1,8 +1,10 @@
-export interface ColorPalette {
-  id: string;
-  name: string;
-  colors: readonly string[];
-}
+import type { ColorPalette } from '../../api/contracts.ts';
+
+export type { ColorPalette };
+
+export const MAX_SAVED_PALETTES = 32;
+export const MAX_PALETTE_NAME_LENGTH = 32;
+export const MAX_PALETTE_COLORS = 8;
 
 export const COLOR_PALETTES = [
   { id: 'cyberpunk', name: 'Cyberpunk', colors: ['#00F5FF', '#FF0080', '#FFE600'] },
@@ -14,6 +16,28 @@ export const COLOR_PALETTES = [
   { id: 'rog-crimson', name: 'ROG Crimson', colors: ['#FF0026', '#6E0010', '#FF5500'] },
   { id: 'vaporwave', name: 'Vaporwave', colors: ['#FF71CE', '#01CDFE', '#05FFA1', '#B967FF'] },
 ] as const satisfies readonly ColorPalette[];
+
+/** Why `name` cannot be saved, or undefined when the trimmed name is free to use. */
+export function paletteNameError(
+  name: string,
+  palettes: readonly Pick<ColorPalette, 'id' | 'name'>[],
+  ignoreId?: string,
+): string | undefined {
+  const trimmed = name.trim();
+  if (trimmed.length < 1 || trimmed.length > MAX_PALETTE_NAME_LENGTH) {
+    return 'Use 1–32 characters.';
+  }
+
+  const duplicate = palettes.some(
+    (palette) => palette.id !== ignoreId && palette.name.trim().toLocaleLowerCase() === trimmed.toLocaleLowerCase(),
+  );
+  return duplicate ? 'A palette with this name already exists.' : undefined;
+}
+
+/** Current effect colors can be stored when the list is non-empty and inside both the effect and palette caps. */
+export function canSavePaletteColors(colors: readonly string[], min: number, max: number): boolean {
+  return colors.length >= 1 && colors.length >= min && colors.length <= max && colors.length <= MAX_PALETTE_COLORS;
+}
 
 /**
  * Slices or repeats `colors` until the length sits in `[minColors, maxColors]`.

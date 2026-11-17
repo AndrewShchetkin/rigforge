@@ -22,6 +22,7 @@ public static class ConflictingSoftwareDetector
     public static IReadOnlyList<string> Detect()
     {
         var warnings = new List<string>();
+        DetectMultipleRigForgeInstances(warnings);
         foreach (var (processName, product, impact) in KnownConflicts)
         {
             Process[] processes;
@@ -46,5 +47,74 @@ public static class ConflictingSoftwareDetector
         }
 
         return warnings;
+    }
+
+    internal static string? FormatDuplicateDaemonWarning(int currentPid, ReadOnlySpan<int> daemonPids)
+    {
+        var otherCount = 0;
+        var firstOtherPid = 0;
+        foreach (var pid in daemonPids)
+        {
+            if (pid != currentPid)
+            {
+                if (otherCount == 0)
+                {
+                    firstOtherPid = pid;
+                }
+
+                otherCount++;
+            }
+        }
+
+        return otherCount switch
+        {
+            0 => null,
+            1 => $"Another RigForge.Daemon instance (PID {firstOtherPid}) is running: multiple instances stream conflicting RGB frames and cause flickering. Stop the duplicate process.",
+            _ => $"{otherCount} other RigForge.Daemon instances (including PID {firstOtherPid}) are running: multiple instances stream conflicting RGB frames and cause flickering. Stop the duplicate processes.",
+        };
+    }
+
+    private static void DetectMultipleRigForgeInstances(List<string> warnings)
+    {
+        Process[] processes;
+        try
+        {
+            processes = Process.GetProcessesByName("RigForge.Daemon");
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        try
+        {
+            // In rigforge-scan (where the current process is not RigForge.Daemon), warn only when at least two daemons run.
+            // inside RigForge.Daemon itself, any other RigForge.Daemon PID != Environment.ProcessId is a duplicate.
+            var currentPid = Environment.ProcessId;
+            var isDaemonProcess = processes.Any(p => p.Id == currentPid);
+            if (!isDaemonProcess && processes.Length <= 1)
+            {
+                return;
+            }
+
+            Span<int> pids = processes.Length <= 16 ? stackalloc int[processes.Length] : new int[processes.Length];
+            for (var i = 0; i < processes.Length; i++)
+            {
+                pids[i] = processes[i].Id;
+            }
+
+            var effectiveSelf = isDaemonProcess ? currentPid : pids[0];
+            if (FormatDuplicateDaemonWarning(effectiveSelf, pids) is { } message)
+            {
+                warnings.Add(message);
+            }
+        }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                process.Dispose();
+            }
+        }
     }
 }

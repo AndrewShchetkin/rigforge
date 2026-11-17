@@ -349,6 +349,7 @@ export const systemStateSchema = z.looseObject({
     lcd: z.looseObject({ mode: z.enum(LCD_MODES), sensorSelectors: z.array(str) }),
     displays: z.record(str, z.looseObject({ mode: z.enum(LCD_MODES), sensorSelectors: z.array(str) })).optional(),
     colorCorrections: z.array(z.looseObject({ deviceId: str, gamma: num, whiteBalance: str })).optional(),
+    colorPalettes: z.array(z.looseObject({ id: str, name: str, colors: z.array(str) })).optional(),
   }),
   effectiveCanvas: canvasShape,
   effects: z.array(

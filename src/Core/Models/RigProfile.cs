@@ -23,4 +23,7 @@ public sealed record RigProfile
 
     /// <summary>Optional gamma and white balance, one entry per device.</summary>
     public IReadOnlyList<DeviceColorCorrection> ColorCorrections { get; init; } = [];
+
+    /// <summary>Named color lists the user saved. Built-in palettes are not stored here.</summary>
+    public IReadOnlyList<ColorPalette> ColorPalettes { get; init; } = [];
 }

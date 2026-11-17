@@ -50,6 +50,71 @@ public static class ProfileCommands
             return current with { Displays = displays };
         }, cancellationToken);
 
+    /// <summary>
+    /// Adds the palette at the end, or replaces the one with the same id in place.
+    /// The name is trimmed and each parseable color is stored as uppercase #RRGGBB.
+    /// </summary>
+    public static Task<ProfileUpdateResult> UpsertColorPaletteAsync(this ProfileService profiles, ColorPalette palette, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(palette);
+        var normalized = NormalizeColorPalette(palette);
+        return profiles.UpdateAsync(current =>
+        {
+            var palettes = current.ColorPalettes ?? [];
+            var next = new List<ColorPalette>(palettes.Count + 1);
+            var replaced = false;
+            foreach (var existing in palettes)
+            {
+                if (existing is not null && string.Equals(existing.Id, normalized.Id, StringComparison.Ordinal))
+                {
+                    next.Add(normalized);
+                    replaced = true;
+                }
+                else if (existing is not null)
+                {
+                    next.Add(existing);
+                }
+            }
+
+            if (!replaced)
+            {
+                next.Add(normalized);
+            }
+
+            return current with { ColorPalettes = next };
+        }, cancellationToken);
+    }
+
+    public static Task<ProfileUpdateResult> RemoveColorPaletteAsync(this ProfileService profiles, string paletteId, CancellationToken cancellationToken) =>
+        profiles.UpdateAsync(current =>
+        {
+            var palettes = current.ColorPalettes ?? [];
+            return current with
+            {
+                ColorPalettes = palettes
+                    .Where(palette => palette is not null && !string.Equals(palette.Id, paletteId, StringComparison.Ordinal))
+                    .ToArray(),
+            };
+        }, cancellationToken);
+
+    private static ColorPalette NormalizeColorPalette(ColorPalette palette)
+    {
+        var colors = new List<string>();
+        if (palette.Colors is not null)
+        {
+            foreach (var color in palette.Colors)
+            {
+                colors.Add(RgbColor.TryParse(color, out var parsed) ? parsed.ToString() : color ?? "");
+            }
+        }
+
+        return palette with
+        {
+            Name = palette.Name?.Trim() ?? "",
+            Colors = colors,
+        };
+    }
+
     /// <summary>Removes a per-device LCD override so the device falls back to <see cref="RigProfile.Lcd"/>.</summary>
     public static Task<ProfileUpdateResult> RemoveDisplayAsync(this ProfileService profiles, string deviceId, CancellationToken cancellationToken) =>
         profiles.UpdateAsync(current =>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { EffectSettings } from '../../api/contracts.ts';
+import type { ColorPalette, EffectSettings } from '../../api/contracts.ts';
 import { effectSettingsSchemaFor } from '../../api/schemas.ts';
+import { useToast } from '../../components/feedback/useToast.ts';
 import { Badge } from '../../components/ui/Badge.tsx';
 import { Card } from '../../components/ui/Card.tsx';
 import { EmptyState } from '../../components/ui/EmptyState.tsx';
@@ -23,7 +24,42 @@ interface PendingEdit {
 export function EffectPanel() {
   const { profile, effects } = useSystem();
   const api = useDaemonApi();
+  const toast = useToast();
   const sensorOptions = useSensorOptions();
+  const palettes = profile.colorPalettes ?? [];
+
+  const savePalette = useCallback(
+    async (name: string, colors: readonly string[]) => {
+      const saved = await api.upsertColorPalette({ id: crypto.randomUUID(), name, colors: [...colors] });
+      if (saved) {
+        toast.success('Palette saved.');
+      }
+      return saved !== null;
+    },
+    [api, toast],
+  );
+
+  const renamePalette = useCallback(
+    async (palette: ColorPalette, name: string) => {
+      const saved = await api.upsertColorPalette({ id: palette.id, name, colors: [...palette.colors] });
+      if (saved) {
+        toast.success('Palette renamed.');
+      }
+      return saved !== null;
+    },
+    [api, toast],
+  );
+
+  const deletePalette = useCallback(
+    async (palette: ColorPalette) => {
+      const saved = await api.removeColorPalette(palette.id);
+      if (saved) {
+        toast.success('Palette removed.');
+      }
+      return saved !== null;
+    },
+    [api, toast],
+  );
   const [pending, setPending] = useState<PendingEdit | null>(null);
   const [applying, setApplying] = useState(false);
   const revision = useRef(0);
@@ -93,7 +129,17 @@ export function EffectPanel() {
       {effects.length === 0 ? (
         <EmptyState title="No effects available">The daemon did not report any lighting effects.</EmptyState>
       ) : (
-        <EffectForm effects={effects} value={value} errors={errors} sensorOptions={sensorOptions} onChange={change} />
+        <EffectForm
+          effects={effects}
+          value={value}
+          errors={errors}
+          sensorOptions={sensorOptions}
+          palettes={palettes}
+          onChange={change}
+          onSavePalette={savePalette}
+          onRenamePalette={renamePalette}
+          onDeletePalette={deletePalette}
+        />
       )}
     </Card>
   );

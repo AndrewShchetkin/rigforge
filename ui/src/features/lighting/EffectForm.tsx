@@ -1,5 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import type {
+  ColorPalette,
   EffectDescriptorDto,
   EffectParameterDefinitionDto,
   EffectParameterValue,
@@ -24,7 +25,11 @@ interface EffectFormProps {
   value: EffectSettings;
   errors: FieldErrors;
   sensorOptions: readonly SensorOption[];
+  palettes: readonly ColorPalette[];
   onChange: (patch: Partial<EffectSettings>) => void;
+  onSavePalette: (name: string, colors: readonly string[]) => Promise<boolean>;
+  onRenamePalette: (palette: ColorPalette, name: string) => Promise<boolean>;
+  onDeletePalette: (palette: ColorPalette) => Promise<boolean>;
 }
 
 function formatNumeric(value: number, parameter: EffectParameterDefinitionDto, integer = false): string {
@@ -52,7 +57,17 @@ function numericValue(current: EffectParameterValue, parameter: EffectParameterD
 }
 
 /** Effect parameters; which fields appear is driven by the effect descriptor's parameter schema. */
-export const EffectForm = memo(function EffectForm({ effects, value, errors, sensorOptions, onChange }: EffectFormProps) {
+export const EffectForm = memo(function EffectForm({
+  effects,
+  value,
+  errors,
+  sensorOptions,
+  palettes,
+  onChange,
+  onSavePalette,
+  onRenamePalette,
+  onDeletePalette,
+}: EffectFormProps) {
   const descriptor = effects.find((effect) => effect.id === value.effectId);
 
   const setParameter = (key: string, parameterValue: EffectParameterValue) =>
@@ -72,7 +87,11 @@ export const EffectForm = memo(function EffectForm({ effects, value, errors, sen
             min={parameter.minColors}
             max={parameter.maxColors}
             error={error}
+            palettes={palettes}
             onChange={(next) => setParameter(parameter.key, next)}
+            onSavePalette={onSavePalette}
+            onRenamePalette={onRenamePalette}
+            onDeletePalette={onDeletePalette}
           />
         );
       }

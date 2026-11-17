@@ -62,9 +62,9 @@ public sealed partial class ProfileService(
             return;
         }
 
-        // Source-generated JSON leaves a missing colorCorrections array or displays object null.
-        // Treat those as empty so an older profile.json stays valid. An explicit null that skips
-        // this step still fails validation.
+        // Source-generated JSON leaves a missing colorCorrections array, colorPalettes array, or
+        // displays object null. Treat those as empty so an older profile.json stays valid. An
+        // explicit null that skips this step still fails validation.
         loaded = CoerceCollections(loaded);
 
         var validation = await validator.ValidateAsync(loaded, cancellationToken);
@@ -136,7 +136,10 @@ public sealed partial class ProfileService(
     {
         var corrections = profile.ColorCorrections ?? [];
         var displays = profile.Displays ?? new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
-        if (ReferenceEquals(corrections, profile.ColorCorrections) && ReferenceEquals(displays, profile.Displays))
+        var palettes = profile.ColorPalettes ?? [];
+        if (ReferenceEquals(corrections, profile.ColorCorrections)
+            && ReferenceEquals(displays, profile.Displays)
+            && ReferenceEquals(palettes, profile.ColorPalettes))
         {
             return profile;
         }
@@ -145,6 +148,7 @@ public sealed partial class ProfileService(
         {
             ColorCorrections = corrections,
             Displays = displays,
+            ColorPalettes = palettes,
         };
     }
 
@@ -189,6 +193,19 @@ public sealed partial class ProfileService(
             }
         }
 
+        var keptPalettes = new List<ColorPalette>();
+        if (loaded.ColorPalettes is not null)
+        {
+            foreach (var palette in loaded.ColorPalettes)
+            {
+                if (palette is not null
+                    && (await validator.ValidateAsync(fallback with { ColorPalettes = [..keptPalettes, palette] }, cancellationToken)).IsValid)
+                {
+                    keptPalettes.Add(palette);
+                }
+            }
+        }
+
         var keptDisplays = new Dictionary<string, LcdSettings>(StringComparer.Ordinal);
         if (loaded.Displays is not null)
         {
@@ -217,6 +234,7 @@ public sealed partial class ProfileService(
             Lcd = lcd,
             FanCurves = keptCurves,
             ColorCorrections = keptCorrections,
+            ColorPalettes = keptPalettes,
             Displays = keptDisplays,
         });
     }

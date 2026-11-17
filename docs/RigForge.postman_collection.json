@@ -149,7 +149,21 @@
             }
           }
         },
-        { "name": "Remove color correction", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/color-corrections/{{deviceId}}" } }
+        { "name": "Remove color correction", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/color-corrections/{{deviceId}}" } },
+        {
+          "name": "Upsert color palette",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/profile/color-palettes/{{paletteId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Name is trimmed to 1..32 characters. 1..8 colors as #RRGGBB. The route id overwrites the body. At most 32 palettes, names unique ignoring case.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{paletteId}}\",\n  \"name\": \"Sunset\",\n  \"colors\": [\"#FF5E00\", \"#FFD000\"]\n}"
+            }
+          }
+        },
+        { "name": "Remove color palette", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/profile/color-palettes/{{paletteId}}" } }
       ]
     }
   ]

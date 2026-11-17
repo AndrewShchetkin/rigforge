@@ -118,6 +118,16 @@ public static class ApiEndpoints
             .WithName("RemoveColorCorrection")
             .WithSummary("Removes a device color correction; the device returns to neutral gamma and white balance.");
 
+        api.MapPut("/profile/color-palettes/{id}", (string id, ColorPalette palette, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.UpsertColorPaletteAsync(palette with { Id = id }, ct)))
+            .WithName("UpsertColorPalette")
+            .WithSummary("Creates or replaces a named color palette. The route id overwrites the body.");
+
+        api.MapDelete("/profile/color-palettes/{id}", (string id, ProfileService profiles, CancellationToken ct) =>
+                ToResult(profiles.RemoveColorPaletteAsync(id, ct)))
+            .WithName("RemoveColorPalette")
+            .WithSummary("Removes a named color palette.");
+
         return app;
     }
 

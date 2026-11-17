@@ -272,6 +272,18 @@ describe('systemStateSchema', () => {
     expect(systemStateSchema.safeParse(legacy).success).toBe(true);
   });
 
+  it('accepts saved color palettes and a snapshot that omits them', () => {
+    const withPalettes = structuredClone(snapshot) as typeof snapshot & {
+      profile: (typeof snapshot)['profile'] & { colorPalettes?: { id: string; name: string; colors: string[] }[] };
+    };
+    withPalettes.profile.colorPalettes = [{ id: 'sunset', name: 'Закат', colors: ['#FF8800'] }];
+    expect(systemStateSchema.safeParse(withPalettes).success).toBe(true);
+
+    const omitted = structuredClone(snapshot) as { profile: { colorPalettes?: unknown } };
+    delete omitted.profile.colorPalettes;
+    expect(systemStateSchema.safeParse(omitted).success).toBe(true);
+  });
+
   it('rejects a performance sample with an unknown render mode', () => {
     const broken = structuredClone(snapshot);
     (broken.performance as { renderMode: string }).renderMode = 'Turbo';

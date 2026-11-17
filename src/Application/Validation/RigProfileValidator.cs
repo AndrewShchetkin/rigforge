@@ -44,6 +44,69 @@ public sealed class RigProfileValidator : AbstractValidator<RigProfile>
             .WithMessage("A device can only have one color correction.");
 
         RuleForEach(p => p.ColorCorrections).NotNull().SetValidator(new DeviceColorCorrectionValidator());
+
+        RuleFor(p => p.ColorPalettes)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
+            .Must(palettes => palettes is not null && palettes.Count <= 32)
+            .WithMessage("At most 32 color palettes are supported.")
+            .Must(HasUniquePaletteIds)
+            .WithMessage("Color palette ids must be unique.")
+            .Must(HasUniquePaletteNames)
+            .WithMessage("Color palette names must be unique.");
+
+        RuleForEach(p => p.ColorPalettes).NotNull().SetValidator(new ColorPaletteValidator());
+    }
+
+    /// <summary>Null list fails validation. Null entries are skipped so they cannot throw; the per-item rule rejects them.</summary>
+    private static bool HasUniquePaletteIds(IReadOnlyList<ColorPalette> palettes)
+    {
+        if (palettes is null)
+        {
+            return false;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var palette in palettes)
+        {
+            if (string.IsNullOrEmpty(palette?.Id))
+            {
+                continue;
+            }
+
+            if (!seen.Add(palette.Id))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Names are compared after trim, without regard to case. Empty names fail the per-item rule.</summary>
+    private static bool HasUniquePaletteNames(IReadOnlyList<ColorPalette> palettes)
+    {
+        if (palettes is null)
+        {
+            return false;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var palette in palettes)
+        {
+            var name = palette?.Name?.Trim();
+            if (string.IsNullOrEmpty(name))
+            {
+                continue;
+            }
+
+            if (!seen.Add(name))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Null list fails validation. Null entries are skipped so they cannot throw; the per-item rule rejects them.</summary>
@@ -369,6 +432,37 @@ public sealed class DeviceColorCorrectionValidator : AbstractValidator<DeviceCol
         }
 
         result.Errors.Add(new ValidationFailure(nameof(DeviceColorCorrection), "A color correction entry cannot be null."));
+        return false;
+    }
+}
+
+public sealed class ColorPaletteValidator : AbstractValidator<ColorPalette>
+{
+    public ColorPaletteValidator()
+    {
+        RuleFor(p => p.Id).NotEmpty().MaximumLength(64);
+        RuleFor(p => p.Name)
+            .Must(name => name is not null && name.Trim().Length is >= 1 and <= 32)
+            .WithMessage("Color palette name must be 1–32 characters.");
+        RuleFor(p => p.Colors)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
+            .Must(colors => colors is not null && colors.Count is >= 1 and <= 8)
+            .WithMessage("A color palette needs between 1 and 8 colors.");
+        RuleForEach(p => p.Colors)
+            .Must(color => RgbColor.TryParse(color, out _))
+            .WithMessage("Color palette colors must be #RRGGBB.")
+            .When(p => p.Colors is not null);
+    }
+
+    protected override bool PreValidate(ValidationContext<ColorPalette> context, ValidationResult result)
+    {
+        if (context.InstanceToValidate is not null)
+        {
+            return true;
+        }
+
+        result.Errors.Add(new ValidationFailure(nameof(ColorPalette), "A color palette entry cannot be null."));
         return false;
     }
 }
