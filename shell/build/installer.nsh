@@ -3,11 +3,10 @@
 ; customCheckAppRunning replaces CHECK_APP_RUNNING, which installSection.nsh runs
 ; before installApplicationFiles and which uninstaller.nsh runs before files are removed.
 ; ${isUpdated} is electron-builder's --updated flag (StdUtils.TestParameter).
+; Install and uninstall call RigForge.Daemon.exe. They do not run PowerShell.
 
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
-
-!define RIGFORGE_SHUTDOWN_B64 "dAByAHkAIAB7ACAASQBuAHYAbwBrAGUALQBSAGUAcwB0AE0AZQB0AGgAbwBkACAALQBNAGUAdABoAG8AZAAgAFAAbwBzAHQAIAAtAFUAcgBpACAAJwBoAHQAdABwADoALwAvADEAMgA3AC4AMAAuADAALgAxADoANQA3ADUANwAvAGEAcABpAC8AaABvAHMAdAAvAHMAaAB1AHQAZABvAHcAbgAnACAALQBUAGkAbQBlAG8AdQB0AFMAZQBjACAAMwAgAHwAIABPAHUAdAAtAE4AdQBsAGwAIAB9ACAAYwBhAHQAYwBoACAAewB9AAoAJABkAGUAYQBkAGwAaQBuAGUAIAA9ACAAKABHAGUAdAAtAEQAYQB0AGUAKQAuAEEAZABkAFMAZQBjAG8AbgBkAHMAKAA0ACkACgB3AGgAaQBsAGUAIAAoACgARwBlAHQALQBQAHIAbwBjAGUAcwBzACAALQBOAGEAbQBlACAAJwBSAGkAZwBGAG8AcgBnAGUALgBEAGEAZQBtAG8AbgAnACAALQBFAHIAcgBvAHIAQQBjAHQAaQBvAG4AIABTAGkAbABlAG4AdABsAHkAQwBvAG4AdABpAG4AdQBlACkAIAAtAGEAbgBkACAAKAAoAEcAZQB0AC0ARABhAHQAZQApACAALQBsAHQAIAAkAGQAZQBhAGQAbABpAG4AZQApACkAIAB7ACAAUwB0AGEAcgB0AC0AUwBsAGUAZQBwACAALQBNAGkAbABsAGkAcwBlAGMAbwBuAGQAcwAgADIANQAwACAAfQA="
 
 !ifndef BUILD_UNINSTALLER
   Var RigForgeAutostart
@@ -21,8 +20,10 @@
 
 !macro rigforgeGracefulStop
   DetailPrint "Stopping RigForge so fans and the AIO screen can return to firmware"
-  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "${RIGFORGE_SHUTDOWN_B64}"`
-  Pop $0
+  ${If} ${FileExists} "$INSTDIR\RigForge.Daemon.exe"
+    nsExec::ExecToLog `"$INSTDIR\RigForge.Daemon.exe" --shutdown`
+    Pop $0
+  ${EndIf}
   nsExec::ExecToLog `"$SYSDIR\schtasks.exe" /End /TN "RigForge"`
   Pop $0
   nsExec::ExecToLog `"$SYSDIR\taskkill.exe" /F /IM "RigForge.exe"`

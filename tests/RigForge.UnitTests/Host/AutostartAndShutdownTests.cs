@@ -185,6 +185,9 @@ public sealed class AutostartAndShutdownTests
         Assert.Equal(6000, shutdownDefaults.TimeoutMs);
         Assert.Equal("http://127.0.0.1:5757", shutdownDefaults.Url);
 
+        Assert.IsType<DaemonCliHandler.RunElevatedCommand>(DaemonCliHandler.Parse(["--run-elevated"]).Command);
+        Assert.NotNull(DaemonCliHandler.Parse(["--run-elevated", "--shutdown"]).Error);
+
         var daemon = DaemonCliHandler.Parse(["--urls", "http://127.0.0.1:5757"]);
         Assert.Null(daemon.Command);
         Assert.Null(daemon.Error);

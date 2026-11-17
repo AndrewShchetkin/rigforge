@@ -4,7 +4,9 @@
 
 ---
 
-## 1. Windows 11 (Рекомендуемый способ — установщик)
+## 1. Windows 11 (установщик `.exe`)
+
+Windows ставится и удаляется исполняемыми файлами. `RigForge-Setup-<version>-win-x64.exe` регистрирует программу, задачу автозапуска и пункт в «Установленные приложения». Удаление запускает `Uninstall RigForge.exe` из папки установки. Скрипты PowerShell в релиз не входят: их блокирует политика выполнения, пока они не подписаны.
 
 ### Шаг 1. Скачивание релиза
 Скачайте со страницы релизов файл **`RigForge-Setup-<version>-win-x64.exe`**.
@@ -86,6 +88,8 @@ cd rigforge-linux-x64
 ```powershell
 # Windows (собирает UI, self-contained win-x64 + linux-x64, NSIS Setup.exe, portable .zip, .tar.gz и SHA256SUMS.txt)
 .\deploy\Build-Release.ps1
+# затем установка тем же exe, который уходит в релиз
+.\artifacts\RigForge-Setup-<version>-win-x64.exe
 ```
 
 ```bash

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
@@ -22,6 +23,11 @@ public static class DaemonCliHandler
     public sealed record SetAutostartCommand(bool Enabled) : DaemonCliCommand;
 
     public sealed record ShutdownCommand(int TimeoutMs, string Url) : DaemonCliCommand;
+
+    /// <summary>Re-launches this executable with the Windows runas verb and then exits.</summary>
+    public sealed record RunElevatedCommand : DaemonCliCommand;
+
+    public const int ElevationCancelledExitCode = 1223;
 
     public sealed record ParseResult(DaemonCliCommand? Command, string? Error);
 
@@ -71,11 +77,11 @@ public static class DaemonCliHandler
         for (var i = 0; i < args.Count; i++)
         {
             var arg = args[i];
-            if (Is(arg, "--install-task") || Is(arg, "--uninstall-task") || Is(arg, "--shutdown"))
+            if (Is(arg, "--install-task") || Is(arg, "--uninstall-task") || Is(arg, "--shutdown") || Is(arg, "--run-elevated"))
             {
                 if (verb is not null)
                 {
-                    return new ParseResult(null, "Only one of --install-task, --uninstall-task, --set-autostart, or --shutdown may be used.");
+                    return new ParseResult(null, "Only one of --install-task, --uninstall-task, --set-autostart, --shutdown, or --run-elevated may be used.");
                 }
 
                 verb = arg.ToLowerInvariant();
@@ -84,7 +90,7 @@ public static class DaemonCliHandler
             {
                 if (verb is not null)
                 {
-                    return new ParseResult(null, "Only one of --install-task, --uninstall-task, --set-autostart, or --shutdown may be used.");
+                    return new ParseResult(null, "Only one of --install-task, --uninstall-task, --set-autostart, --shutdown, or --run-elevated may be used.");
                 }
 
                 if (!TryTake(args, ref i, out var value) || !bool.TryParse(value, out var parsed))
@@ -141,6 +147,7 @@ public static class DaemonCliHandler
             "--uninstall-task" => new ParseResult(new UninstallTaskCommand(), null),
             "--set-autostart" => new ParseResult(new SetAutostartCommand(enabled ?? false), null),
             "--shutdown" => new ParseResult(new ShutdownCommand(timeout ?? DefaultShutdownTimeoutMs, url ?? DefaultShutdownUrl), null),
+            "--run-elevated" => new ParseResult(new RunElevatedCommand(), null),
             _ => new ParseResult(null, null),
         };
     }
@@ -177,6 +184,14 @@ public static class DaemonCliHandler
                 return 0;
             case ShutdownCommand shutdown:
                 return await ShutdownAsync(shutdown, cancellationToken);
+            case RunElevatedCommand:
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("Elevated launch is only available on Windows.");
+                    return 1;
+                }
+
+                return RunElevated();
             default:
                 return 1;
         }
@@ -215,6 +230,39 @@ public static class DaemonCliHandler
 
     [SupportedOSPlatform("windows")]
     private static WindowsAutostartService CreateWindowsAutostart() => new();
+
+    [SupportedOSPlatform("windows")]
+    private static int RunElevated()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe))
+        {
+            Console.Error.WriteLine("Could not locate RigForge.Daemon.exe.");
+            return 1;
+        }
+
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = exe,
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
+                UseShellExecute = true,
+                Verb = "runas",
+            };
+            if (Process.Start(start) is null)
+            {
+                Console.Error.WriteLine("Windows did not start the elevated daemon.");
+                return 1;
+            }
+
+            return 0;
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == ElevationCancelledExitCode)
+        {
+            return ElevationCancelledExitCode;
+        }
+    }
 
     private static async Task<int> ShutdownAsync(ShutdownCommand command, CancellationToken cancellationToken)
     {

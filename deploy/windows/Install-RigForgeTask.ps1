@@ -1,9 +1,11 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Publishes RigForge and registers it to start at logon.
+    Local developer helper. Not the supported install path and not shipped in the release.
 
 .DESCRIPTION
+    The supported Windows install is artifacts\RigForge-Setup-<version>-win-x64.exe.
+    This script is for a machine where the repository is already cloned and PowerShell is allowed to run.
     The daemon runs as a logon task instead of a Windows service because DXGI Desktop Duplication
     (Ambilight) only works inside the interactive user session. It runs elevated so that
     LibreHardwareMonitor can use the PawnIO driver for CPU temperatures and the Super I/O chip.

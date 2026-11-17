@@ -1,9 +1,11 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Stops RigForge and removes its logon task.
+    Local developer helper. Not the supported uninstall path and not shipped in the release.
 
 .DESCRIPTION
+    The supported Windows uninstall is Uninstall RigForge.exe from the install folder, or Installed apps.
+    This script is for a machine where the repository is already cloned and PowerShell is allowed to run.
     Companion to Install-RigForgeTask.ps1. Asks the daemon to restore fan and AIO
     firmware control, then removes the scheduled task.
     Profile data under %LOCALAPPDATA%\RigForge is kept unless -PurgeProfileData is set.

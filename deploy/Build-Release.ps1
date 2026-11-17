@@ -115,9 +115,6 @@ try {
     }
     New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
     Copy-Item -Path (Join-Path $unpacked '*') -Destination $portableDir -Recurse -Force
-    $windowsDeploy = Join-Path $portableDir 'deploy\windows'
-    New-Item -ItemType Directory -Path $windowsDeploy -Force | Out-Null
-    Copy-Item -Path (Join-Path $repo 'deploy\windows\*') -Destination $windowsDeploy -Force
 
     $portableZip = Join-Path $artifacts "rigforge-win-x64-$version.zip"
     if (Test-Path -LiteralPath $portableZip) {

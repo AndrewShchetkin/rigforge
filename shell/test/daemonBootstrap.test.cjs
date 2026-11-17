@@ -377,7 +377,7 @@ test('scheduled task command is schtasks /Run with a hidden window', async () =>
   assert.equal(calls[0].options.windowsHide, true);
 });
 
-test('elevated launch passes the daemon path only through the environment', async () => {
+test('elevated launch asks the daemon executable to show UAC', async () => {
   const calls = [];
   const exe = 'C:\\Program Files\\RigForge (x64)\\RigForge.Daemon.exe';
   const cwd = 'C:\\Program Files\\RigForge (x64)';
@@ -386,19 +386,10 @@ test('elevated launch passes the daemon path only through the environment', asyn
   });
   const result = await start({ exe, cwd });
   assert.equal(result.code, 0);
-  assert.equal(calls[0].file, 'powershell.exe');
-  assert.deepEqual(calls[0].args, [
-    '-NoProfile',
-    '-NonInteractive',
-    '-WindowStyle',
-    'Hidden',
-    '-Command',
-    'Start-Process -FilePath $env:RIGFORGE_DAEMON_EXE -WorkingDirectory $env:RIGFORGE_DAEMON_CWD -Verb RunAs',
-  ]);
+  assert.equal(calls[0].file, exe);
+  assert.deepEqual(calls[0].args, ['--run-elevated']);
   assert.equal(calls[0].options.windowsHide, true);
-  assert.equal(calls[0].options.env.RIGFORGE_DAEMON_EXE, exe);
-  assert.equal(calls[0].options.env.RIGFORGE_DAEMON_CWD, cwd);
-  assert.equal(calls[0].args.join(' ').includes('Program Files'), false);
+  assert.equal(calls[0].options.cwd, cwd);
 });
 
 test('linux service starter calls systemctl --user', async () => {

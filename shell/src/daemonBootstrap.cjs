@@ -197,20 +197,9 @@ function createScheduledTaskStarter({ spawn: spawnImpl = spawn } = {}) {
 
 function createElevatedStarter({ spawn: spawnImpl = spawn } = {}) {
   return function startElevatedExecutable({ exe, cwd }) {
-    return runCommand(spawnImpl, 'powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-WindowStyle',
-      'Hidden',
-      '-Command',
-      'Start-Process -FilePath $env:RIGFORGE_DAEMON_EXE -WorkingDirectory $env:RIGFORGE_DAEMON_CWD -Verb RunAs',
-    ], {
+    return runCommand(spawnImpl, exe, ['--run-elevated'], {
       windowsHide: true,
-      env: {
-        ...process.env,
-        RIGFORGE_DAEMON_EXE: exe,
-        RIGFORGE_DAEMON_CWD: cwd,
-      },
+      cwd,
     });
   };
 }

@@ -268,7 +268,7 @@ CPU: 2,6 % одного ядра при 60 FPS эффекта на 7 зонах.
 2. **Модель привилегий и запуск с ярлыка без повторного UAC:**
    - демон регистрируется в Планировщике заданий как `\RigForge` (`InteractiveToken` + `HighestAvailable`), привязываясь к владельцу интерактивного процесса `explorer.exe` (защита от over-the-shoulder UAC).
    - сама задача всегда остаётся в `Settings.Enabled = true` и `AllowStartOnDemand = true` с SDDL-правом `FRFX` для интерактивного пользователя, а опция «Запускать при входе в систему» переключает только `LogonTrigger.Enabled`.
-   - при двойном клике по ярлыку `RigForge` (`RigForge.exe`), если демон уже работает (`/api/health`), окно мгновенно открывает дашборд. Если демон остановлен (автозапуск выключен или нажат `Exit` в трее), открывается `splash.html`, демон поднимается через `schtasks /Run /TN "RigForge"` **без запроса UAC** (с резервным fallback на `RunAs` и кнопками `Start RigForge (Retry)` / `Quit`), и после готовности `/api/health` загружается дашборд.
+   - при двойном клике по ярлыку `RigForge` (`RigForge.exe`), если демон уже работает (`/api/health`), окно мгновенно открывает дашборд. Если демон остановлен (автозапуск выключен или нажат `Exit` в трее), открывается `splash.html`, демон поднимается через `schtasks /Run /TN "RigForge"` **без запроса UAC** (если задачи нет — `RigForge.Daemon.exe --run-elevated` показывает обычный UAC; кнопки `Start RigForge (Retry)` / `Quit`), и после готовности `/api/health` загружается дашборд.
    - закрытие окна крестиком завершает только процесс Electron, оставляя `RigForge.Daemon.exe` управлять оборудованием в системном трее. Повторный старт `RigForge.Daemon.exe` перехватывается `SingleInstanceMutex` и просто открывает окно дашборда.
 3. **Управление автозапуском после установки:**
    - в контекстном меню системного трея (`Open dashboard`, **`Start with Windows`**, `Exit`);
@@ -294,8 +294,8 @@ cd ui; npm test
 cd ../shell; npm test
 # полная сборка релиза (RigForge-Setup-<ver>-win-x64.exe, portable .zip, linux .tar.gz, SHA256SUMS.txt)
 .\deploy\Build-Release.ps1
-# установка задачи напрямую из исходников для разработчика (опционально)
-.\deploy\windows\Install-RigForgeTask.ps1
+# установка на Windows — запуск собранного exe, не скрипта
+.\artifacts\RigForge-Setup-<ver>-win-x64.exe
 ```
 
 Перед запуском закройте NZXT CAM, SignalRGB и LightingService (Armoury Crate) — демон предупреждает о них в UI и логе.
