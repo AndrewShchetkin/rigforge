@@ -9,7 +9,7 @@ export function CoolingPage() {
   const channels = devices.flatMap((device) => device.fanChannels.map((channel) => ({ device, channel })));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       <Callout title="Safety rules enforced by the daemon">
         Pumps are never driven below their minimum duty. Losing all temperature sources, or a liquid temperature of
         60 °C or more, forces 100 %.
@@ -19,7 +19,7 @@ export function CoolingPage() {
           Fan headers and AIO pumps appear here once a supported controller is found.
         </EmptyState>
       ) : (
-        <div className="grid gap-6 2xl:grid-cols-2">
+        <div className="grid gap-2 2xl:grid-cols-2">
           {channels.map(({ device, channel }) => (
             <FanChannelCard key={curveIdFor(device.id, channel.id)} device={device} channel={channel} />
           ))}

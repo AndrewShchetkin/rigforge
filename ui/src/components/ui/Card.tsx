@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { PanelCorners, panelClass, panelTitleClass } from './PanelFrame.tsx';
 
 interface CardProps {
   title?: ReactNode;
@@ -10,27 +11,29 @@ interface CardProps {
 
 export function Card({ title, description, actions, children, className = '' }: CardProps) {
   const headingId = useId();
-  const hasHeader = title !== undefined || actions !== undefined;
+  const hasMeta = description !== undefined || actions !== undefined;
 
   return (
     <section
+      data-panel
       aria-labelledby={title === undefined ? undefined : headingId}
-      className={`rounded-xl border border-zinc-800 bg-zinc-900/60 shadow-sm shadow-black/20 ${className}`}
+      className={`${panelClass} ${className}`}
     >
-      {hasHeader && (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-800 px-4 py-3 sm:px-5">
-          <div className="min-w-0">
-            {title !== undefined && (
-              <h2 id={headingId} className="text-sm font-semibold text-zinc-100">
-                {title}
-              </h2>
-            )}
-            {description !== undefined && <p className="mt-0.5 text-xs text-zinc-400">{description}</p>}
-          </div>
-          {actions !== undefined && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-        </header>
+      <PanelCorners />
+      {title !== undefined && (
+        <h2 id={headingId} className={panelTitleClass}>
+          {title}
+        </h2>
       )}
-      <div className="p-4 sm:p-5">{children}</div>
+      <div className="p-3 pt-4">
+        {hasMeta && (
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            {description !== undefined && <p className="min-w-0 text-xs text-dim">{description}</p>}
+            {actions !== undefined && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+          </div>
+        )}
+        {children}
+      </div>
     </section>
   );
 }

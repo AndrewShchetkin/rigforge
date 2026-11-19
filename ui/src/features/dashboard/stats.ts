@@ -1,6 +1,7 @@
 import type { SensorReadingDto, SensorRole } from '../../api/contracts.ts';
 import { EMPTY_VALUE, formatCelsius, formatPercent, formatRpm, formatWatts } from '../../lib/format.ts';
 import { findByRole } from '../../lib/sensors.ts';
+import { blockBar, meterFraction, meterTone, type MeterTone } from './meters.ts';
 
 export interface Stat {
   role: SensorRole;
@@ -8,6 +9,9 @@ export interface Stat {
   value: string;
   /** Name of the sensor that provides the value, if any. */
   source: string | null;
+  tone: MeterTone;
+  filled: string;
+  empty: string;
 }
 
 const STATS: readonly { role: SensorRole; label: string; format: (value: number) => string }[] = [
@@ -23,6 +27,16 @@ const STATS: readonly { role: SensorRole; label: string; format: (value: number)
 export function buildStats(readings: readonly SensorReadingDto[]): Stat[] {
   return STATS.map(({ role, label, format }) => {
     const reading = findByRole(readings, role);
-    return { role, label, value: reading ? format(reading.value) : EMPTY_VALUE, source: reading?.name ?? null };
+    const numeric = reading && Number.isFinite(reading.value) ? reading.value : null;
+    const bar = blockBar(meterFraction(role, numeric));
+    return {
+      role,
+      label,
+      value: reading ? format(reading.value) : EMPTY_VALUE,
+      source: reading?.name ?? null,
+      tone: meterTone(role, numeric),
+      filled: bar.filled,
+      empty: bar.empty,
+    };
   });
 }

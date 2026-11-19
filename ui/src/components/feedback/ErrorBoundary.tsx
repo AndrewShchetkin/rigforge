@@ -28,7 +28,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return this.props.children;
     }
     return (
-      <div role="alert" className="mx-auto max-w-lg rounded-xl border border-red-500/30 bg-red-950/30 p-6 text-center">
+      <div role="alert" className="mx-auto max-w-lg border border-bad/40 bg-panel p-6 text-center text-bad">
         <ErrorIcon className="mx-auto size-8 text-red-400" />
         <h2 className="mt-3 text-base font-semibold text-zinc-100">This page crashed</h2>
         <p className="mt-1 text-sm break-words text-zinc-400">{error.message}</p>

@@ -68,7 +68,7 @@ export function EffectGallery({ effects, value, error, onSelect }: EffectGallery
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-950/80 px-2.5 focus-within:border-violet-500">
+      <div className="flex items-center gap-2 border border-line bg-base px-2.5 focus-within:border-accent">
         <SearchIcon className="size-3.5 shrink-0 text-zinc-500" />
         <input
           type="search"
@@ -103,7 +103,7 @@ export function EffectGallery({ effects, value, error, onSelect }: EffectGallery
                 type="button"
                 aria-pressed={selected}
                 onClick={() => onSelect(effect.id)}
-                className={`overflow-hidden rounded-lg border text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/10 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]' : 'border-zinc-800 bg-zinc-950/50 hover:border-zinc-600'}`}
+                className={`overflow-hidden border text-left transition-colors ${selected ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-base hover:border-dim'}`}
               >
                 <EffectMiniPreview
                   effectId={effect.id}
@@ -151,10 +151,10 @@ function CategoryTab({
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
-      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors ${pressed ? 'bg-violet-600 text-white' : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700'}`}
+      className={`inline-flex shrink-0 items-center gap-1 border px-2 py-1 text-xs whitespace-nowrap ${pressed ? 'border-accent/60 bg-accent/15 text-accent' : 'border-line text-dim hover:text-ink'}`}
     >
       {label}
-      <span className={`tabular-nums ${pressed ? 'text-violet-100' : 'text-zinc-500'}`}>{count}</span>
+      <span className="tabular-nums">{count}</span>
     </button>
   );
 }

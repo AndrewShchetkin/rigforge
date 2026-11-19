@@ -30,8 +30,8 @@ export const LcdDeviceList = memo(function LcdDeviceList({
               type="button"
               aria-pressed={selectedId === device.id}
               onClick={() => onSelect(device.id)}
-              className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-violet-400 ${
-                selectedId === device.id ? 'bg-violet-500/10 ring-1 ring-violet-500/40' : 'hover:bg-zinc-800/60'
+              className={`flex w-full flex-wrap items-center justify-between gap-2 px-2 py-2 text-left transition-colors ${
+                selectedId === device.id ? 'bg-accent/10 text-accent ring-1 ring-accent/40' : 'hover:bg-white/5'
               }`}
             >
               <div className="min-w-0">

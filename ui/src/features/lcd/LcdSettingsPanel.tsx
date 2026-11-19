@@ -182,7 +182,7 @@ function TargetTabs({
 }
 
 function tabClass(selected: boolean): string {
-  return `rounded-md border px-2.5 py-1 text-left text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-400 ${
-    selected ? 'border-violet-400/60 bg-violet-600 text-white' : 'border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800'
+  return `border px-2.5 py-1 text-left text-xs font-medium transition-colors ${
+    selected ? 'border-accent/60 bg-accent/15 text-accent' : 'border-line bg-base text-dim hover:text-ink'
   }`;
 }

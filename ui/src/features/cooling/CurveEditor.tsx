@@ -22,6 +22,13 @@ interface CurveEditorProps {
 const KEY_STEP = 1;
 const KEY_STEP_LARGE = 5;
 
+function pointClass(dragging: boolean, dimmed: boolean): string {
+  if (dragging) {
+    return 'cursor-grabbing fill-accent';
+  }
+  return dimmed ? 'cursor-grab fill-zinc-500' : 'cursor-grab fill-zinc-200';
+}
+
 /** SVG fan curve editor: drag points, double-click to add, Alt+click / right-click / Delete to remove. */
 export const CurveEditor = memo(function CurveEditor({
   label,
@@ -132,7 +139,7 @@ export const CurveEditor = memo(function CurveEditor({
       >
         <CurveAxes />
         {showHysteresis && hysteresis > 0 && (
-          <polygon points={hysteresisBand(points, hysteresis)} className="fill-violet-500/10" pointerEvents="none" />
+          <polygon points={hysteresisBand(points, hysteresis)} className="fill-white/10" pointerEvents="none" />
         )}
         {minDuty > 0 && <DutyLine duty={minDuty} label={`min ${minDuty}%`} variant="floor" />}
         <rect
@@ -150,7 +157,7 @@ export const CurveEditor = memo(function CurveEditor({
           strokeWidth={2.5}
           strokeLinejoin="round"
           pointerEvents="none"
-          className={dimmed ? 'stroke-violet-400/30' : 'stroke-violet-400'}
+          className={dimmed ? 'stroke-zinc-500' : 'stroke-zinc-200'}
         />
         {fixedDuty !== null && <DutyLine duty={fixedDuty} label={`fixed ${fixedDuty}%`} variant="fixed" />}
         {liveTemperature !== null && liveDuty !== null && <LiveMarker temperature={liveTemperature} duty={liveDuty} />}
@@ -165,7 +172,7 @@ export const CurveEditor = memo(function CurveEditor({
             aria-roledescription="curve point"
             aria-label={`Point ${index + 1} of ${points.length}: ${formatCelsius(point.temperature)}, ${formatPercent(point.duty)}`}
             strokeWidth={2}
-            className={`stroke-zinc-950 outline-none focus-visible:stroke-white ${dimmed ? 'fill-violet-300/40' : 'fill-violet-300'} ${dragIndex === index ? 'cursor-grabbing' : 'cursor-grab'}`}
+            className={`stroke-zinc-950 outline-none focus-visible:stroke-accent ${pointClass(dragIndex === index, dimmed)}`}
             onPointerDown={(event) => handlePointerDown(event, index)}
             onPointerMove={(event) => handlePointerMove(event, index)}
             onPointerUp={endDrag}

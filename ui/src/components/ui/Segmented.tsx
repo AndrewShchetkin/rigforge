@@ -19,13 +19,13 @@ export function Segmented<T extends string | number>({ label, value, options, on
   return (
     <fieldset disabled={disabled} className="min-w-0 disabled:opacity-50">
       <legend className="mb-1.5 text-sm text-zinc-300">{label}</legend>
-      <div className="inline-flex flex-wrap rounded-md border border-zinc-700 bg-zinc-950/80 p-0.5">
+      <div className="inline-flex flex-wrap border border-line bg-base p-0.5">
         {options.map((option) => {
           const selected = option.value === value;
           return (
             <label
               key={String(option.value)}
-              className={`cursor-pointer rounded px-3 py-1 text-sm transition-colors has-focus-visible:outline-2 has-focus-visible:outline-violet-400 ${selected ? 'bg-violet-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}
+              className={`cursor-pointer px-3 py-1 text-sm transition-colors ${selected ? 'bg-accent/15 text-accent' : 'text-dim hover:text-ink'}`}
             >
               <input
                 type="radio"

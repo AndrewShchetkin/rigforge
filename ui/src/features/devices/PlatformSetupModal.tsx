@@ -3,6 +3,7 @@ import type { DaemonInfoDto } from '../../api/contracts.ts';
 import { useToast } from '../../components/feedback/useToast.ts';
 import { Button } from '../../components/ui/Button.tsx';
 import { CloseIcon, CopyIcon } from '../../components/ui/icons.tsx';
+import { PanelCorners } from '../../components/ui/PanelFrame.tsx';
 import { Toggle } from '../../components/ui/Toggle.tsx';
 import { formatMegabytesAdaptive } from '../../lib/format.ts';
 import { useDaemonApi } from '../../state/hooks.ts';
@@ -150,9 +151,11 @@ export function PlatformSetupModal({
           onClose();
         }
       }}
-      className="m-auto max-h-[min(44rem,calc(100dvh-2rem))] w-[min(42rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900 p-0 text-zinc-100 shadow-2xl shadow-black/60 backdrop:bg-black/60 backdrop:backdrop-blur-sm"
+      data-panel
+      className="group relative m-auto max-h-[min(44rem,calc(100dvh-2rem))] w-[min(42rem,calc(100vw-2rem))] overflow-y-auto border border-line bg-panel p-0 text-ink backdrop:bg-black/70"
     >
-      <div className="flex items-start justify-between gap-3 border-b border-zinc-800 px-5 py-4">
+      <PanelCorners />
+      <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div className="min-w-0">
           <h2 id={titleId} className="text-base font-semibold">
             System, startup, and permissions
@@ -165,7 +168,7 @@ export function PlatformSetupModal({
       </div>
 
       <div className="space-y-4 px-5 py-4">
-        <section className="rounded-lg border border-violet-500/40 bg-violet-500/10 px-4 py-3">
+        <section className="border border-accent/40 bg-accent/10 px-4 py-3 text-accent">
           <h3 className="text-sm font-semibold text-zinc-50">Startup with PC</h3>
           <div className="mt-3">
             <Toggle
@@ -280,7 +283,7 @@ function OsTab({
       type="button"
       aria-pressed={selected}
       onClick={onSelect}
-      className={`rounded px-3 py-1 text-sm transition-colors ${selected ? 'bg-violet-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}
+      className={`px-3 py-1 text-sm transition-colors ${selected ? 'bg-accent/15 text-accent' : 'text-dim hover:text-ink'}`}
     >
       {label}
       {thisPc && <span className="ml-1.5 text-[10px] font-semibold tracking-wide uppercase opacity-80">This PC</span>}

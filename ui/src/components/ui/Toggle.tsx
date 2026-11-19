@@ -32,11 +32,11 @@ export function Toggle({ label, checked, onChange, description, disabled }: Togg
         aria-describedby={description !== undefined ? helpId(id) : undefined}
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${checked ? 'bg-violet-600' : 'bg-zinc-700'}`}
+        className={`relative inline-flex h-4 w-8 shrink-0 items-center border border-line transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${checked ? 'bg-accent/20' : 'bg-base'}`}
       >
         <span
           aria-hidden="true"
-          className={`inline-block size-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4.5' : 'translate-x-0.5'}`}
+          className={`inline-block size-3 transition-transform ${checked ? 'translate-x-4 bg-accent' : 'translate-x-0.5 bg-dim'}`}
         />
       </button>
     </div>

@@ -4,10 +4,10 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md';
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-violet-600 text-white hover:bg-violet-500 disabled:hover:bg-violet-600',
-  secondary: 'border border-zinc-700 bg-zinc-800/80 text-zinc-100 hover:bg-zinc-700/80 disabled:hover:bg-zinc-800/80',
-  ghost: 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 disabled:hover:bg-transparent',
-  danger: 'bg-red-600/90 text-white hover:bg-red-500 disabled:hover:bg-red-600/90',
+  primary: 'border border-accent/60 text-accent hover:bg-accent/10 disabled:hover:bg-transparent',
+  secondary: 'border border-line bg-panel text-ink hover:border-dim disabled:hover:border-line',
+  ghost: 'text-dim hover:bg-white/5 hover:text-ink disabled:hover:bg-transparent',
+  danger: 'border border-bad/70 text-bad hover:bg-bad/10 disabled:hover:bg-transparent',
 };
 
 const SIZES: Record<Size, string> = {
@@ -24,7 +24,7 @@ export function Button({ variant = 'secondary', size = 'md', type = 'button', cl
   return (
     <button
       type={type}
-      className={`inline-flex shrink-0 items-center justify-center rounded-md font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...props}
     />
   );

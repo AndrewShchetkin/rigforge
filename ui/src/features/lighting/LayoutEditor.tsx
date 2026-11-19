@@ -258,7 +258,7 @@ function CanvasToolbar({
                 type="button"
                 aria-pressed={selected}
                 onClick={() => onSnap(option.value)}
-                className={`rounded px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-400 ${selected ? 'bg-violet-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}
+                className={`px-2 py-1 text-xs font-medium transition-colors ${selected ? 'bg-accent/15 text-accent' : 'text-dim hover:text-ink'}`}
               >
                 {option.label}
               </button>
@@ -273,7 +273,7 @@ function CanvasToolbar({
           aria-label="Zoom out"
           disabled={view.zoom <= MIN_ZOOM}
           onClick={() => onZoom(view.zoom - ZOOM_STEP)}
-          className="h-7 min-w-7 px-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-violet-400 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-7 min-w-7 px-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           −
         </button>
@@ -282,7 +282,7 @@ function CanvasToolbar({
           aria-label="Fit canvas at 100%"
           title="Fit canvas"
           onClick={onFit}
-          className="h-7 min-w-16 border-x border-zinc-800 px-2 text-xs font-medium text-zinc-100 tabular-nums hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-violet-400"
+          className="h-7 min-w-16 border-x border-zinc-800 px-2 text-xs font-medium text-zinc-100 tabular-nums hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-accent"
         >
           {zoomLabel}
         </button>
@@ -291,7 +291,7 @@ function CanvasToolbar({
           aria-label="Zoom in"
           disabled={view.zoom >= MAX_ZOOM}
           onClick={() => onZoom(view.zoom + ZOOM_STEP)}
-          className="h-7 min-w-7 px-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-violet-400 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-7 min-w-7 px-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           +
         </button>
@@ -308,7 +308,7 @@ function CanvasToolbar({
               onResize(preset);
             }
           }}
-          className="rounded-md border border-zinc-700 bg-zinc-950/80 px-2 py-1 text-xs text-zinc-100 hover:border-zinc-600 focus:border-violet-500"
+          className="border border-line bg-base px-2 py-1 text-xs text-ink hover:border-dim focus:border-accent"
         >
           {matched === undefined && (
             <option value="custom">

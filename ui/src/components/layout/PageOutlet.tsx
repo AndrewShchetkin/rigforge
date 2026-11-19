@@ -34,7 +34,7 @@ export const PageOutlet = memo(function PageOutlet({ page }: { page: PageId }) {
       <Suspense
         fallback={
           <div className="flex justify-center py-16">
-            <Spinner className="size-6 text-violet-400" />
+            <Spinner className="text-lg text-ok" />
           </div>
         }
       >

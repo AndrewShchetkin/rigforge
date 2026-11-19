@@ -128,7 +128,7 @@ function PaletteChip({
       type="button"
       aria-pressed={active}
       onClick={onApply}
-      className={`inline-flex items-center gap-1.5 rounded-full border py-0.5 pr-2 pl-1 text-xs transition-colors ${active ? 'border-violet-400 bg-violet-500/15 text-violet-100' : 'border-zinc-700 bg-zinc-950/70 text-zinc-200 hover:border-violet-400/70'}`}
+      className={`inline-flex items-center gap-1.5 border py-0.5 pr-2 pl-1 text-xs transition-colors ${active ? 'border-accent bg-accent/15 text-accent' : 'border-line bg-base text-ink hover:border-accent/70'}`}
     >
       <PaletteSwatch colors={colors} />
       {name}
@@ -264,7 +264,7 @@ function UserPalettes({
             return (
               <li
                 key={palette.id}
-                className={`inline-flex items-center gap-0.5 rounded-full border py-0.5 pr-1 pl-1 text-xs ${active ? 'border-violet-400 bg-violet-500/15 text-violet-100' : 'border-zinc-700 bg-zinc-950/70 text-zinc-200'}`}
+                className={`inline-flex items-center gap-0.5 border py-0.5 pr-1 pl-1 text-xs ${active ? 'border-accent bg-accent/15 text-accent' : 'border-line bg-base text-ink'}`}
               >
                 {editing ? (
                   <input

@@ -68,7 +68,7 @@ export function DevicesPage() {
   const nothingDetected = devices.length === 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-zinc-400">{describeSelection(activeFilter, counts)}</p>
         <div className="flex flex-wrap items-center gap-2">
@@ -111,7 +111,7 @@ export function DevicesPage() {
             : 'Choose another group, or rescan after connecting hardware.'}
         </EmptyState>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid gap-2 xl:grid-cols-2">
           {visible.map((device) => (
             <DeviceCard key={device.id} device={device} colorCorrection={corrections.get(device.id)} />
           ))}
@@ -146,19 +146,13 @@ function DeviceGroupStrip({
             type="button"
             aria-pressed={selected}
             onClick={() => onChange(item)}
-            className={`flex min-w-[13.5rem] flex-1 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
-              selected
-                ? 'border-violet-500 bg-violet-500/15'
-                : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900'
+            title={meta.hint}
+            className={`flex items-center gap-2 border px-2 py-1 text-left text-xs ${
+              selected ? 'border-accent/60 bg-accent/10 text-accent' : 'border-line text-dim hover:text-ink'
             }`}
           >
-            <span>
-              <span className={`block text-sm font-medium ${selected ? 'text-violet-50' : 'text-zinc-200'}`}>
-                {meta.label}
-              </span>
-              <span className={`block text-xs ${selected ? 'text-violet-200/80' : 'text-zinc-500'}`}>{meta.hint}</span>
-            </span>
-            <span className={`text-xl font-semibold tabular-nums ${selected ? 'text-white' : 'text-zinc-100'}`}>
+            <span>{meta.label}</span>
+            <span className="tabular-nums">
               {count}
               <span className="sr-only"> {count === 1 ? 'device' : 'devices'}</span>
             </span>

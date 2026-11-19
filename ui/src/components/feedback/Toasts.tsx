@@ -11,9 +11,9 @@ export interface ToastMessage {
 const AUTO_DISMISS_MS = 4_000;
 
 const KIND_STYLES: Record<ToastKind, string> = {
-  error: 'border-red-500/40 bg-red-950/90 text-red-50',
-  success: 'border-emerald-500/40 bg-emerald-950/90 text-emerald-50',
-  info: 'border-violet-500/40 bg-zinc-900/95 text-zinc-50',
+  error: 'border-bad/50 bg-panel text-bad',
+  success: 'border-ok/50 bg-panel text-ok',
+  info: 'border-line bg-panel text-ink',
 };
 
 const KIND_LABELS: Record<ToastKind, string> = { error: 'Error', success: 'Success', info: 'Info' };
@@ -67,7 +67,7 @@ const ToastCard = memo(function ToastCard({ toast, onDismiss }: ToastCardProps) 
   return (
     <div
       role={kind === 'error' ? 'alert' : 'status'}
-      className={`pointer-events-auto flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg shadow-black/40 backdrop-blur ${KIND_STYLES[kind]}`}
+      className={`pointer-events-auto flex items-start gap-3 border px-4 py-3 text-sm ${KIND_STYLES[kind]}`}
     >
       <ToastIcon kind={kind} />
       <p className="min-w-0 flex-1 leading-snug break-words">

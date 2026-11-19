@@ -18,8 +18,8 @@ export function LcdPage() {
   const overrideIds = useMemo(() => new Set(Object.keys(profile.displays ?? {})), [profile.displays]);
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+    <div className="space-y-2">
+      <div className="grid gap-2 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         <Card title="Live preview" description={describePreview(resolvedId !== null, previewDevice)}>
           <LcdPreview png={lcdPreview} lcd={previewDevice?.lcd ?? null} />
         </Card>

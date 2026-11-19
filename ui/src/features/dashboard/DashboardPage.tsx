@@ -14,10 +14,10 @@ export function DashboardPage() {
   const stats = useMemo(() => buildStats(readings), [readings]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       <PerformanceShowcase />
       <StatCards stats={stats} />
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid gap-2 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <Card title="Sensors" description={`${readings.length} readings, grouped by device`}>
           <SensorTable readings={readings} devices={system.devices} />
         </Card>

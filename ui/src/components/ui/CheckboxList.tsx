@@ -31,7 +31,7 @@ export function CheckboxList({ legend, options, selected, onChange, hint, error 
               type="checkbox"
               checked={selected.includes(option.value)}
               onChange={() => toggle(option.value)}
-              className="size-4 shrink-0 accent-violet-500"
+              className="size-4 shrink-0"
             />
             <span className="min-w-0 truncate" title={option.label}>
               {option.label}

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { EffectRenderMode, PerformanceMetricsDto } from '../../api/contracts.ts';
 import { Badge, type BadgeTone } from '../../components/ui/Badge.tsx';
+import { PanelCorners } from '../../components/ui/PanelFrame.tsx';
 import {
   EMPTY_VALUE,
   WEBVIEW_SUITE_RAM_MB,
@@ -41,17 +42,15 @@ export function PerformanceShowcase() {
 
   return (
     <section
+      data-panel
       aria-labelledby="engine-efficiency-heading"
-      className="relative overflow-hidden rounded-2xl border border-violet-500/25 bg-zinc-900/80 shadow-lg shadow-black/20"
+      className="group relative border border-line bg-panel"
     >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,0.18),transparent_52%),radial-gradient(ellipse_at_bottom_right,rgba(16,185,129,0.12),transparent_48%)]"
-      />
-      <div className="relative space-y-5 p-4 sm:p-5">
+      <PanelCorners />
+      <div className="space-y-4 p-4">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold tracking-[0.16em] text-violet-300 uppercase">Engine efficiency</p>
+            <p className="text-[11px] tracking-[0.16em] text-dim uppercase">Engine efficiency</p>
             <h2 id="engine-efficiency-heading" className="mt-1 text-base font-semibold text-zinc-50">
               Zero-alloc lighting telemetry
             </h2>
@@ -63,7 +62,7 @@ export function PerformanceShowcase() {
           <span className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
             <span
               aria-hidden="true"
-              className={`size-1.5 rounded-full ${sampling ? 'bg-violet-400 shadow-[0_0_8px] shadow-violet-400 motion-safe:animate-pulse' : 'bg-emerald-400'}`}
+              className={`size-1.5 ${sampling ? 'bg-accent' : 'bg-ok'}`}
             />
             {metrics ? metrics.renderMode : 'Waiting for a sample'}
           </span>
@@ -102,7 +101,7 @@ export function PerformanceShowcase() {
 
 function Readout({ label, value, detail }: { label: string; value: string; detail: ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-zinc-950/50 px-3.5 py-3">
+    <div className="border border-line bg-base px-3 py-3">
       <dt className="text-[11px] tracking-wide text-zinc-500 uppercase">{label}</dt>
       <dd className="mt-1 text-xl font-semibold text-zinc-50 tabular-nums">{value}</dd>
       <div className="mt-1 truncate text-xs text-zinc-400">{detail}</div>
@@ -117,7 +116,7 @@ function FootprintComparison({ metrics }: { metrics: PerformanceMetricsDto | nul
   const advantage = metrics ? formatRamMultiplier(metrics.privateBytes) : 'Waiting for private bytes';
 
   return (
-    <div className="rounded-xl border border-white/5 bg-zinc-950/40 px-3.5 py-3">
+    <div className="border border-line bg-base px-3 py-3">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-medium text-zinc-100">Footprint</h3>
         <p className="text-xs font-medium text-emerald-200 tabular-nums">{advantage}</p>
@@ -166,8 +165,8 @@ function BarRow({
         <span className="text-zinc-300">{label}</span>
         <span className="text-zinc-400 tabular-nums">{value}</span>
       </div>
-      <div className="relative h-2 overflow-hidden rounded-full bg-zinc-800" aria-hidden="true">
-        <div className={`absolute inset-y-0 rounded-full ${className}`} style={{ left: `${start}%`, width: `${width}%` }} />
+      <div className="relative h-2 overflow-hidden bg-panel" aria-hidden="true">
+        <div className={`absolute inset-y-0 ${className}`} style={{ left: `${start}%`, width: `${width}%` }} />
       </div>
     </div>
   );

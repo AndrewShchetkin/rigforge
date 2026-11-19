@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Button } from '../ui/Button.tsx';
+import { PanelCorners } from '../ui/PanelFrame.tsx';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -35,15 +36,17 @@ export function ConfirmDialog({ open, title, children, confirmLabel, onConfirm, 
         event.preventDefault();
         onCancel();
       }}
-      className="m-auto w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-zinc-700 bg-zinc-900 p-0 text-zinc-100 shadow-2xl shadow-black/60 backdrop:bg-black/60 backdrop:backdrop-blur-sm"
+      data-panel
+      className="group relative m-auto w-[min(28rem,calc(100vw-2rem))] border border-line bg-panel p-0 text-ink backdrop:bg-black/70"
     >
+      <PanelCorners />
       <div className="space-y-3 p-5">
         <h2 id={titleId} className="text-base font-semibold">
           {title}
         </h2>
-        <div className="space-y-2 text-sm text-zinc-300">{children}</div>
+        <div className="space-y-2 text-sm text-dim">{children}</div>
       </div>
-      <div className="flex justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+      <div className="flex justify-end gap-2 border-t border-line px-5 py-3">
         <Button onClick={onCancel}>Cancel</Button>
         <Button variant="danger" onClick={onConfirm}>
           {confirmLabel}

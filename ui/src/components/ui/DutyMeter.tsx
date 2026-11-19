@@ -1,7 +1,16 @@
-import { clamp } from '../../lib/math.ts';
+import { healthTone, blockBar, type MeterTone } from '../../features/dashboard/meters.ts';
 
-/** Applied duty as a bar, with a tick at the target duty. */
+const TONE: Record<MeterTone, string> = {
+  ok: 'text-ok',
+  warn: 'text-warn',
+  bad: 'text-bad',
+  neutral: 'text-ink',
+};
+
+/** Applied duty as a block bar. The accessible value includes the target. */
 export function DutyMeter({ applied, target }: { applied: number; target: number }) {
+  const tone = healthTone(applied);
+  const bar = blockBar(applied / 100);
   return (
     <div
       role="meter"
@@ -9,17 +18,11 @@ export function DutyMeter({ applied, target }: { applied: number; target: number
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(applied)}
-      className="relative h-1.5 rounded-full bg-zinc-800"
+      aria-valuetext={`${Math.round(applied)}%, target ${Math.round(target)}%`}
+      className={`tracking-wider ${TONE[tone]}`}
     >
-      <div
-        className="h-full rounded-full bg-violet-500 transition-[width] duration-500"
-        style={{ width: `${clamp(applied, 0, 100)}%` }}
-      />
-      <div
-        aria-hidden="true"
-        className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded bg-zinc-200"
-        style={{ left: `${clamp(target, 0, 100)}%` }}
-      />
+      <span>{bar.filled}</span>
+      <span className="text-dim">{bar.empty}</span>
     </div>
   );
 }

@@ -13,7 +13,7 @@ export const LcdPreview = memo(function LcdPreview({ png, lcd }: LcdPreviewProps
   return (
     <div className="flex justify-center">
       <div
-        className={`w-full max-w-64 overflow-hidden border-4 border-zinc-800 bg-black shadow-inner shadow-black ${circular ? 'rounded-full' : 'rounded-xl'}`}
+        className={`w-full max-w-64 overflow-hidden border-4 border-line bg-black ${circular ? 'shape-round' : ''}`}
         style={{ aspectRatio: lcd ? `${lcd.width} / ${lcd.height}` : '1 / 1' }}
       >
         {png ? (

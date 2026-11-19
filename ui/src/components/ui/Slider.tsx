@@ -52,10 +52,10 @@ export function Slider({
         aria-valuetext={valueText}
         aria-invalid={error !== undefined || undefined}
         aria-describedby={error !== undefined || hint !== undefined ? helpId(id) : undefined}
-        className="h-2 w-full cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="h-2 w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
       />
       {error !== undefined ? (
-        <p id={helpId(id)} className="text-xs text-red-400">
+        <p id={helpId(id)} className="text-xs text-bad">
           {error}
         </p>
       ) : (

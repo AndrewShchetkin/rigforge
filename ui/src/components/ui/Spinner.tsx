@@ -1,8 +1,10 @@
-export function Spinner({ className = 'size-4' }: { className?: string }) {
+import { useSpinnerFrame } from './motion.ts';
+
+export function Spinner({ className = '' }: { className?: string }) {
+  const frame = useSpinnerFrame();
   return (
-    <span
-      aria-hidden="true"
-      className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent ${className}`}
-    />
+    <span aria-hidden="true" className={`inline-block ${className}`}>
+      {frame}
+    </span>
   );
 }

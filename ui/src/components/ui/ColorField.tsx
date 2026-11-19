@@ -23,7 +23,7 @@ export function ColorField({ label, value, onChange, hint, error }: ColorFieldPr
           onChange={(event) => onChange(event.currentTarget.value.toUpperCase())}
           aria-invalid={error !== undefined || undefined}
           aria-describedby={error !== undefined || hint !== undefined ? helpId(id) : undefined}
-          className="h-9 w-14 cursor-pointer rounded-md border border-zinc-700 bg-zinc-950 p-1"
+          className="h-9 w-14 cursor-pointer border border-line bg-base p-1"
         />
         <span className="font-mono text-sm text-zinc-300">{value.toUpperCase()}</span>
       </div>

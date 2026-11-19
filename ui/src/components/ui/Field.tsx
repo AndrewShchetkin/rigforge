@@ -18,7 +18,7 @@ export function Field({ label, htmlFor, hint, error, children }: FieldProps) {
       </label>
       {children}
       {error !== undefined ? (
-        <p id={helpId(htmlFor)} className="text-xs text-red-400">
+        <p id={helpId(htmlFor)} className="text-xs text-bad">
           {error}
         </p>
       ) : (
