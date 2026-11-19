@@ -10,7 +10,7 @@ Windows is installed and removed with executables. `RigForge-Setup-<version>-win
 
 ### Step 1. Download the release
 
-Download **`RigForge-Setup-<version>-win-x64.exe`** from the GitHub Releases page, or build it from source (section 3).
+Download **[RigForge-Setup-0.1.0-win-x64.exe](https://github.com/AndrewShchetkin/rigforge/releases/download/v0.1.0/RigForge-Setup-0.1.0-win-x64.exe)** from the [v0.1.0 release](https://github.com/AndrewShchetkin/rigforge/releases/tag/v0.1.0). A source build is only needed when changing the program (section 3).
 
 A separate .NET runtime install is not required. The runtime is packed into the installer.
 
@@ -65,6 +65,8 @@ Run `RigForge-Setup-<version>-win-x64.exe` and accept the UAC prompt:
 ## 2. Linux (Debian/Ubuntu, Fedora, Arch/CachyOS, openSUSE)
 
 ### Install from the release archive
+
+Download [rigforge-linux-x64-0.1.0.tar.gz](https://github.com/AndrewShchetkin/rigforge/releases/download/v0.1.0/rigforge-linux-x64-0.1.0.tar.gz) from the [v0.1.0 release](https://github.com/AndrewShchetkin/rigforge/releases/tag/v0.1.0), then:
 
 ```bash
 tar -xzf rigforge-linux-x64-0.1.0.tar.gz
