@@ -19,10 +19,14 @@
 !endif
 
 !macro rigforgeGracefulStop
+  ; Ask a daemon that is already running to restore fans and exit.
+  ; Do not launch $INSTDIR\RigForge.Daemon.exe here: an older build treats
+  ; unknown arguments as a normal start and never exits, so the installer waits forever.
   DetailPrint "Stopping RigForge so fans and the AIO screen can return to firmware"
-  ${If} ${FileExists} "$INSTDIR\RigForge.Daemon.exe"
-    nsExec::ExecToLog `"$INSTDIR\RigForge.Daemon.exe" --shutdown`
+  ${If} ${FileExists} "$SYSDIR\curl.exe"
+    nsExec::ExecToLog `"$SYSDIR\curl.exe" --max-time 5 --connect-timeout 2 -sS -o NUL -X POST http://127.0.0.1:5757/api/host/shutdown`
     Pop $0
+    Sleep 3000
   ${EndIf}
   nsExec::ExecToLog `"$SYSDIR\schtasks.exe" /End /TN "RigForge"`
   Pop $0
