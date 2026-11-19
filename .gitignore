@@ -27,5 +27,6 @@ src/Host.Daemon/wwwroot/
 *.log
 data/
 
-# Visual brainstorm mockups (session keys live here)
+# Visual brainstorm mockups and internal design notes (session keys live here)
 .superpowers/
+docs/superpowers/
