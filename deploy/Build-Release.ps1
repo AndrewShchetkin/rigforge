@@ -85,16 +85,23 @@ try {
     Publish-RigForgeProject $scannerProject 'win-x64' $stageDaemon $selfContained $version
     Publish-RigForgeProject $daemonProject 'win-x64' $stageDaemon $selfContained $version
 
+    # Keep the Electron output outside the repo. A file watcher can lock
+    # shell\dist\win-unpacked\resources\app.asar and make the next build fail with EBUSY.
+    $shellOut = Join-Path ([System.IO.Path]::GetTempPath()) 'rigforge-electron-win'
+    if (Test-Path -LiteralPath $shellOut) {
+        Remove-Item -LiteralPath $shellOut -Recurse -Force
+    }
+
     Push-Location (Join-Path $repo 'shell')
     try {
         Invoke-Native { npm ci }
-        Invoke-Native { npx electron-builder --win nsis dir "-c.extraMetadata.version=$version" }
+        Invoke-Native { npx electron-builder --win nsis dir "-c.extraMetadata.version=$version" "-c.directories.output=$shellOut" }
     }
     finally {
         Pop-Location
     }
 
-    $setupSource = Join-Path $repo "shell\dist\RigForge-Setup-$version-win-x64.exe"
+    $setupSource = Join-Path $shellOut "RigForge-Setup-$version-win-x64.exe"
     if (-not (Test-Path -LiteralPath $setupSource)) {
         throw "Installer was not produced at $setupSource."
     }
@@ -104,25 +111,30 @@ try {
     Copy-Item -LiteralPath $setupSource -Destination $setupDest -Force
     $releaseFiles += $setupDest
 
-    $unpacked = Join-Path $repo 'shell\dist\win-unpacked'
+    $unpacked = Join-Path $shellOut 'win-unpacked'
     if (-not (Test-Path -LiteralPath (Join-Path $unpacked 'RigForge.exe'))) {
         throw "RigForge.exe was not produced at $unpacked."
     }
-
-    $portableDir = Join-Path $artifacts 'rigforge-win-x64'
-    if (Test-Path -LiteralPath $portableDir) {
-        Remove-Item -LiteralPath $portableDir -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $unpacked '*') -Destination $portableDir -Recurse -Force
 
     $portableZip = Join-Path $artifacts "rigforge-win-x64-$version.zip"
     if (Test-Path -LiteralPath $portableZip) {
         Remove-Item -LiteralPath $portableZip -Force
     }
-    & tar.exe -a -cf $portableZip -C $portableDir .
+    & tar.exe -a -cf $portableZip -C $unpacked .
     if ($LASTEXITCODE -ne 0) { throw "Failed to create $portableZip." }
     $releaseFiles += $portableZip
+
+    $portableDir = Join-Path $artifacts 'rigforge-win-x64'
+    try {
+        if (Test-Path -LiteralPath $portableDir) {
+            Remove-Item -LiteralPath $portableDir -Recurse -Force -ErrorAction Stop
+        }
+        New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $unpacked '*') -Destination $portableDir -Recurse -Force
+    }
+    catch {
+        Write-Warning "Left the previous portable folder in place because a file in it is open. The zip is current."
+    }
 
     if (-not $SkipLinux) {
         $linuxOut = Join-Path $artifacts 'rigforge-linux-x64'
